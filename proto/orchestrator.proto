@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package orchestrator.v1;
+
+option go_package = "github.com/iicpc/orchestrator/v1";
+
+// Benchmark orchestrator for managing deployment and testing
+service BenchmarkOrchestrator {
+  rpc DeploySubmission(DeploySubmissionRequest) returns (DeploySubmissionResponse);
+  rpc StartBenchmark(StartBenchmarkRequest) returns (StartBenchmarkResponse);
+  rpc GetBenchmarkStatus(GetBenchmarkStatusRequest) returns (GetBenchmarkStatusResponse);
+  rpc StopBenchmark(StopBenchmarkRequest) returns (StopBenchmarkResponse);
+}
+
+message DeploySubmissionRequest {
+  string submission_id = 1;
+  string container_image = 2;
+  repeated string exposed_ports = 3;
+  ResourceLimits resource_limits = 4;
+}
+
+message ResourceLimits {
+  int32 cpu_milli = 1;      // CPU in millicores
+  int64 memory_mb = 2;      // Memory in MB
+  int64 timeout_seconds = 3;
+}
+
+message DeploySubmissionResponse {
+  string deployment_id = 1;
+  string service_url = 2;
+  string status = 3;
+}
+
+message StartBenchmarkRequest {
+  string submission_id = 1;
+  string deployment_id = 2;
+  BenchmarkConfig config = 3;
+}
+
+message BenchmarkConfig {
+  int32 bot_count = 1;
+  int32 duration_seconds = 2;
+  int32 orders_per_second = 3;
+  repeated string protocols = 4;  // rest, websocket, fix
+}
+
+message StartBenchmarkResponse {
+  string benchmark_id = 1;
+  string status = 2;
+  int64 started_at = 3;
+}
+
+message GetBenchmarkStatusRequest {
+  string benchmark_id = 1;
+}
+
+message GetBenchmarkStatusResponse {
+  string benchmark_id = 1;
+  string status = 2;  // running, completed, failed
+  int64 elapsed_seconds = 3;
+  TelemetryMetrics metrics = 4;
+}
+
+message TelemetryMetrics {
+  double current_tps = 1;
+  double avg_latency_ms = 2;
+  int32 total_orders_sent = 3;
+  int32 total_orders_acknowledged = 4;
+  int32 total_errors = 5;
+}
+
+message StopBenchmarkRequest {
+  string benchmark_id = 1;
+}
+
+message StopBenchmarkResponse {
+  bool success = 1;
+  string final_status = 2;
+}

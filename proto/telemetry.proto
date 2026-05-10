@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package telemetry.v1;
+
+option go_package = "github.com/iicpc/telemetry/v1";
+
+// Telemetry service for collecting and streaming metrics
+service TelemetryService {
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricsUpdate);
+  rpc SubmitMetrics(SubmitMetricsRequest) returns (SubmitMetricsResponse);
+  rpc GetHistoricalMetrics(GetHistoricalMetricsRequest) returns (GetHistoricalMetricsResponse);
+}
+
+message StreamMetricsRequest {
+  string benchmark_id = 1;
+}
+
+message MetricsUpdate {
+  string benchmark_id = 1;
+  int64 timestamp = 2;
+  MetricData data = 3;
+}
+
+message MetricData {
+  double tps = 1;
+  double p50_latency_ms = 2;
+  double p90_latency_ms = 3;
+  double p99_latency_ms = 4;
+  int32 active_connections = 5;
+  int32 error_rate = 6;
+  double cpu_usage_percent = 7;
+  double memory_usage_mb = 8;
+}
+
+message SubmitMetricsRequest {
+  string benchmark_id = 1;
+  repeated MetricPoint metrics = 2;
+}
+
+message MetricPoint {
+  int64 timestamp = 1;
+  string metric_name = 2;
+  double value = 3;
+  map<string, string> labels = 4;
+}
+
+message SubmitMetricsResponse {
+  bool success = 1;
+  int32 points_accepted = 2;
+}
+
+message GetHistoricalMetricsRequest {
+  string benchmark_id = 1;
+  int64 start_time = 2;
+  int64 end_time = 3;
+  repeated string metric_names = 4;
+}
+
+message GetHistoricalMetricsResponse {
+  repeated MetricPoint metrics = 1;
+}

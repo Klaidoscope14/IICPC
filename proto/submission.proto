@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package submission.v1;
+
+option go_package = "github.com/iicpc/submission/v1";
+
+// Submission service for handling contestant code uploads
+service SubmissionService {
+  rpc UploadSubmission(UploadSubmissionRequest) returns (UploadSubmissionResponse);
+  rpc GetSubmission(GetSubmissionRequest) returns (GetSubmissionResponse);
+  rpc ListSubmissions(ListSubmissionsRequest) returns (ListSubmissionsResponse);
+  rpc UpdateSubmissionStatus(UpdateSubmissionStatusRequest) returns (UpdateSubmissionStatusResponse);
+}
+
+message UploadSubmissionRequest {
+  string contestant_id = 1;
+  string team_name = 2;
+  string language = 3;  // cpp, rust, go, etc.
+  bytes code_archive = 4;
+  string dockerfile = 5;
+  map<string, string> metadata = 6;
+}
+
+message UploadSubmissionResponse {
+  string submission_id = 1;
+  string status = 2;  // pending, processing, deployed, failed
+  int64 created_at = 3;
+}
+
+message GetSubmissionRequest {
+  string submission_id = 1;
+}
+
+message GetSubmissionResponse {
+  string submission_id = 1;
+  string contestant_id = 2;
+  string team_name = 3;
+  string language = 4;
+  string status = 5;
+  map<string, string> metadata = 6;
+  int64 created_at = 7;
+  int64 updated_at = 8;
+  BenchmarkResult benchmark_result = 9;
+}
+
+message BenchmarkResult {
+  double tps = 1;
+  double p50_latency_ms = 2;
+  double p90_latency_ms = 3;
+  double p99_latency_ms = 4;
+  double correctness_score = 5;
+  int32 total_orders = 6;
+  int32 failed_orders = 7;
+}
+
+message ListSubmissionsRequest {
+  string contestant_id = 1;
+  string status = 2;
+  int32 page_size = 3;
+  int32 page_token = 4;
+}
+
+message ListSubmissionsResponse {
+  repeated Submission submissions = 1;
+  string next_page_token = 2;
+}
+
+message Submission {
+  string submission_id = 1;
+  string contestant_id = 2;
+  string team_name = 3;
+  string status = 4;
+  int64 created_at = 5;
+  BenchmarkResult benchmark_result = 6;
+}
+
+message UpdateSubmissionStatusRequest {
+  string submission_id = 1;
+  string status = 2;
+  string error_message = 3;
+}
+
+message UpdateSubmissionStatusResponse {
+  bool success = 1;
+}
