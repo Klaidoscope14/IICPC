@@ -52,6 +52,7 @@ message ValidationReport {
   int32 total_errors = 7;
   int32 total_warnings = 8;
   int64 duration_ms = 9;
+  CompatibilityReport compatibility = 10;
 }
 
 message CheckResult {
@@ -82,10 +83,37 @@ message EndpointSpec {
   string path = 2;
   string content_type = 3;
   map<string, string> schema = 4;
+  bool required = 5;
 }
 
 message WebSocketSpec {
   string path = 1;
   repeated string message_types = 2;
   bool requires_ping = 3;
+  bool required = 4;
+}
+
+message CompatibilityReport {
+  bool compatible = 1;
+  string summary = 2;
+  repeated int32 required_ports = 3;
+  repeated int32 exposed_ports = 4;
+  repeated EndpointCompatibility required_api = 5;
+  repeated WebSocketCompatibility required_websockets = 6;
+  int32 blocking_issue_count = 7;
+  int32 warning_count = 8;
+  repeated string performance_hints = 9;
+}
+
+message EndpointCompatibility {
+  string name = 1;
+  string method = 2;
+  string path = 3;
+  bool present = 4;
+}
+
+message WebSocketCompatibility {
+  string name = 1;
+  string path = 2;
+  bool present = 3;
 }

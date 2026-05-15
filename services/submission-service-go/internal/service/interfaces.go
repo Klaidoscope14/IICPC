@@ -11,6 +11,7 @@ import (
 // the repository package provides implementations.
 type SubmissionRepository interface {
 	Create(ctx context.Context, submission *domain.Submission) error
+	CreateWithNextVersion(ctx context.Context, submission *domain.Submission) error
 	GetByID(ctx context.Context, id string) (*domain.Submission, error)
 	List(ctx context.Context, contestantID string, status string, limit, offset int) ([]*domain.Submission, error)
 	UpdateStatus(ctx context.Context, id string, status domain.SubmissionStatus) error
@@ -19,5 +20,5 @@ type SubmissionRepository interface {
 	GetLatestVersion(ctx context.Context, contestantID string) (int, error)
 	GetByIdempotencyKey(ctx context.Context, key string) (*domain.Submission, error)
 	CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error
+	ListSubmissionLogs(ctx context.Context, submissionID string, limit, offset int) ([]*domain.SubmissionLog, error)
 }
-

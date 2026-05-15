@@ -54,7 +54,7 @@ func main() {
 	// 3. Initialize dependencies
 	repo := repository.NewPostgresValidationRepository(db)
 	storageClient := storage.NewLocalStorageClient() // shared volume mount
-	
+
 	// Customize contract limits from config
 	contract := domain.DefaultContract
 	contract.MaxExtractedBytes = cfg.MaxExtractedBytes
@@ -64,7 +64,13 @@ func main() {
 
 	// 4. Initialize Redpanda Consumer (for submission.created)
 	subConsumer := consumer.NewSubmissionConsumer(valService)
-	eventConsumer, err := events.NewConsumer(cfg.RedpandaBrokers, cfg.ConsumerGroupID, []string{events.TopicSubmissionCreated}, logger)
+	eventConsumer, err := events.NewConsumerWithOptions(
+		cfg.RedpandaBrokers,
+		cfg.ConsumerGroupID,
+		[]string{events.TopicSubmissionCreated},
+		logger,
+		events.ConsumerOptions{PartitionConcurrency: 8},
+	)
 	if err != nil {
 		log.Fatalf("Failed to initialize Redpanda consumer: %v", err)
 	}
@@ -104,6 +110,7 @@ func main() {
 	{
 		validations := api.Group("/validations")
 		{
+			validations.GET("/contract", valHandler.GetContract)
 			validations.GET("/:id", valHandler.GetResult)
 			validations.POST("/:id/trigger", valHandler.TriggerValidation)
 		}
@@ -130,11 +137,11 @@ func main() {
 
 	// Cancel the consumer context
 	cancel()
-	
+
 	// Shutdown the HTTP server with a timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}

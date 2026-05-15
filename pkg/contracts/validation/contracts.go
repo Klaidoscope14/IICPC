@@ -45,6 +45,7 @@ type Report struct {
 	Runtime       string                 `json:"runtime"`
 	ExposedPort   int                    `json:"exposed_port,omitempty"`
 	CheckResults  map[string]CheckResult `json:"check_results"`
+	Compatibility *CompatibilityReport   `json:"compatibility,omitempty"`
 	TotalErrors   int                    `json:"total_errors"`
 	TotalWarnings int                    `json:"total_warnings"`
 	DurationMs    int64                  `json:"duration_ms"`
@@ -100,6 +101,7 @@ type RuntimeAPIContract struct {
 }
 
 type EndpointSpec struct {
+	Required    bool              `json:"required"`
 	Method      string            `json:"method"`
 	Path        string            `json:"path"`
 	ContentType string            `json:"content_type,omitempty"`
@@ -107,7 +109,33 @@ type EndpointSpec struct {
 }
 
 type WebSocketSpec struct {
+	Required     bool     `json:"required"`
 	Path         string   `json:"path"`
 	MessageTypes []string `json:"message_types,omitempty"`
 	RequiresPing bool     `json:"requires_ping"`
+}
+
+type CompatibilityReport struct {
+	Compatible         bool                     `json:"compatible"`
+	Summary            string                   `json:"summary"`
+	RequiredPorts      []int                    `json:"required_ports,omitempty"`
+	ExposedPorts       []int                    `json:"exposed_ports,omitempty"`
+	RequiredAPI        []EndpointCompatibility  `json:"required_api,omitempty"`
+	RequiredWebSockets []WebSocketCompatibility `json:"required_websockets,omitempty"`
+	BlockingIssueCount int                      `json:"blocking_issue_count"`
+	WarningCount       int                      `json:"warning_count"`
+	PerformanceHints   []string                 `json:"performance_hints,omitempty"`
+}
+
+type EndpointCompatibility struct {
+	Name    string `json:"name"`
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Present bool   `json:"present"`
+}
+
+type WebSocketCompatibility struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Present bool   `json:"present"`
 }

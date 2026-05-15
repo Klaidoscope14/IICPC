@@ -22,11 +22,11 @@ var safeFilenameRegex = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
 
 // defaultAllowedMIMETypes is the set of MIME types accepted for uploads.
 var defaultAllowedMIMETypes = map[string]bool{
-	"application/zip":                true,
-	"application/x-zip-compressed":   true,
-	"application/octet-stream":       true, // Many ZIP files are detected as this
-	"application/x-zip":              true,
-	"multipart/x-zip":                true,
+	"application/zip":              true,
+	"application/x-zip-compressed": true,
+	"application/octet-stream":     true, // Many ZIP files are detected as this
+	"application/x-zip":            true,
+	"multipart/x-zip":              true,
 }
 
 // UploadValidator validates uploaded files using streaming checks.
@@ -50,6 +50,9 @@ func NewUploadValidator(maxUploadBytes int64, allowedMIME map[string]bool) *Uplo
 // ValidateFileSize checks if the declared file size is within limits.
 // This is a pre-flight check using Content-Length / multipart header, before reading any bytes.
 func (v *UploadValidator) ValidateFileSize(fileSize int64) error {
+	if fileSize <= 0 {
+		return fmt.Errorf("%w: empty archive", domain.ErrInvalidArchive)
+	}
 	if fileSize > v.maxUploadBytes {
 		return fmt.Errorf("%w: %d bytes exceeds maximum of %d bytes",
 			domain.ErrFileTooLarge, fileSize, v.maxUploadBytes)
@@ -63,10 +66,12 @@ func (v *UploadValidator) ValidateFileSize(fileSize int64) error {
 //
 // This is a single-pass operation: validate + hash + write in one stream.
 func (v *UploadValidator) ValidateAndHash(src io.Reader, dst io.Writer) (checksum string, bytesWritten int64, err error) {
+	limitedSrc := &io.LimitedReader{R: src, N: v.maxUploadBytes + 1}
+
 	// Read the first 512 bytes for validation (ZIP magic + MIME sniffing).
 	// 512 bytes is what net/http.DetectContentType requires.
 	header := make([]byte, 512)
-	n, err := io.ReadAtLeast(src, header, len(zipMagicBytes))
+	n, err := io.ReadAtLeast(limitedSrc, header, len(zipMagicBytes))
 	if err != nil {
 		return "", 0, fmt.Errorf("%w: file too small or unreadable", domain.ErrInvalidArchive)
 	}
@@ -95,12 +100,15 @@ func (v *UploadValidator) ValidateAndHash(src io.Reader, dst io.Writer) (checksu
 	}
 
 	// Stream the rest of the file through hash + destination.
-	remaining, err := io.Copy(multiWriter, src)
+	remaining, err := io.Copy(multiWriter, limitedSrc)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to stream file: %w", err)
 	}
 
 	totalBytes := int64(headerWritten) + remaining
+	if totalBytes > v.maxUploadBytes {
+		return "", totalBytes, fmt.Errorf("%w: archive exceeds maximum of %d bytes", domain.ErrFileTooLarge, v.maxUploadBytes)
+	}
 	checksumHex := hex.EncodeToString(hasher.Sum(nil))
 
 	return checksumHex, totalBytes, nil

@@ -21,6 +21,14 @@ func NewValidationHandler(repo service.ValidationRepository, valService *service
 	}
 }
 
+// GetContract returns the active submission contract enforced by the validator.
+func (h *ValidationHandler) GetContract(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"version":  "v1",
+		"contract": h.valService.Contract(),
+	})
+}
+
 // GetResult fetches the validation result for a submission.
 func (h *ValidationHandler) GetResult(c *gin.Context) {
 	submissionID := c.Param("id")

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -70,7 +72,7 @@ func main() {
 	}
 
 	// Initialize upload validator.
-	validator := validation.NewUploadValidator(cfg.Storage.MaxUploadBytes, nil)
+	validator := validation.NewUploadValidator(cfg.Storage.MaxUploadBytes, allowedMIMEMap(cfg.Storage.AllowedMIMEs))
 
 	// Wire up dependencies.
 	submissionRepo := repository.NewPostgresSubmissionRepository(db)
@@ -91,6 +93,12 @@ func main() {
 	submissionHandler.RegisterRoutes(router)
 
 	router.GET("/health", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database disconnected", "service": "submission-service"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "submission-service"})
 	})
 
@@ -106,3 +114,16 @@ func main() {
 	server.RunGracefully(srv, "submission-service")
 }
 
+func allowedMIMEMap(values []string) map[string]bool {
+	allowed := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			allowed[value] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}

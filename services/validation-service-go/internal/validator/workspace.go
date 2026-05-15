@@ -13,7 +13,9 @@ import (
 
 var (
 	workspaceDockerfileFromRegex   = regexp.MustCompile(`(?i)^\s*FROM\s+`)
-	workspaceDockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
+	workspaceDockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(.+)$`)
+	workspaceDockerfileUserRegex   = regexp.MustCompile(`(?i)^\s*USER\s+`)
+	workspaceDockerfileHealthRegex = regexp.MustCompile(`(?i)^\s*HEALTHCHECK\s+`)
 	workspaceCMakeProjectRegex     = regexp.MustCompile(`(?i)^\s*project\s*\(`)
 	workspaceCMakeStandardRegex    = regexp.MustCompile(`(?i)^\s*set\s*\(\s*CMAKE_CXX_STANDARD\s+(\d+)`)
 	workspaceCMakeExecutableRegex  = regexp.MustCompile(`(?i)^\s*add_executable\s*\(`)
@@ -29,11 +31,14 @@ type CMakeInfo struct {
 }
 
 type WorkspaceDockerfileInfo struct {
-	Exists    bool
-	HasFROM   bool
-	HasEXPOSE bool
-	Port      int
-	BaseImage string
+	Exists         bool
+	HasFROM        bool
+	HasEXPOSE      bool
+	HasUSER        bool
+	HasHEALTHCHECK bool
+	Port           int
+	ExposedPorts   []int
+	BaseImage      string
 }
 
 type MainInfo struct {
@@ -56,6 +61,19 @@ type WorkspaceContext struct {
 	ForbiddenErrors   []domain.ValidationError
 	ForbiddenWarnings []domain.ValidationError
 	PortFoundInSrc    bool
+	PortsFoundInSrc   map[int]bool
+	EndpointSignals   EndpointSignals
+}
+
+type EndpointSignals struct {
+	NetworkPattern       bool
+	MethodHits           map[string]bool
+	PathHits             map[string]bool
+	SchemaFieldHits      map[string]bool
+	WebSocketPathHits    map[string]bool
+	WebSocketMessageHits map[string]bool
+	WebSocketUpgrade     bool
+	PingHandler          bool
 }
 
 // AnalyzeWorkspace performs a single pass over the submission files.
@@ -64,6 +82,14 @@ func AnalyzeWorkspace(rootDir string, contract *domain.SubmissionContract) *Work
 		RootDir:         rootDir,
 		Contract:        contract,
 		ExtensionCounts: make(map[string]int),
+		PortsFoundInSrc: make(map[int]bool),
+		EndpointSignals: EndpointSignals{
+			MethodHits:           make(map[string]bool),
+			PathHits:             make(map[string]bool),
+			SchemaFieldHits:      make(map[string]bool),
+			WebSocketPathHits:    make(map[string]bool),
+			WebSocketMessageHits: make(map[string]bool),
+		},
 	}
 
 	// 1. Direct reads (O(1) lookups instead of walking)
@@ -79,6 +105,12 @@ func AnalyzeWorkspace(rootDir string, contract *domain.SubmissionContract) *Work
 	if ctx.Docker.HasEXPOSE {
 		portStr = strconv.Itoa(ctx.Docker.Port)
 	}
+	portStrings := make(map[int]string)
+	for _, port := range append(ctx.Docker.ExposedPorts, contract.RuntimeAPI.RequiredPorts...) {
+		if port > 0 {
+			portStrings[port] = strconv.Itoa(port)
+		}
+	}
 
 	_ = filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -86,6 +118,7 @@ func AnalyzeWorkspace(rootDir string, contract *domain.SubmissionContract) *Work
 		}
 
 		relPath, _ := filepath.Rel(rootDir, path)
+		relPath = filepath.ToSlash(relPath)
 
 		// Check forbidden patterns
 		for _, pattern := range contract.ForbiddenPatterns {
@@ -115,13 +148,29 @@ func AnalyzeWorkspace(rootDir string, contract *domain.SubmissionContract) *Work
 			})
 			return nil // Don't bother scanning forbidden files
 		}
+		if len(contract.AllowedExtensions) > 0 && !contract.AllowedExtensions[ext] {
+			ctx.ForbiddenWarnings = append(ctx.ForbiddenWarnings, domain.ValidationError{
+				Code:     "UNSUPPORTED_EXTENSION",
+				Message:  "File extension is not part of the submission contract: " + ext,
+				Severity: domain.SeverityWarning,
+				FilePath: relPath,
+			})
+		}
 
-		// Port search in src/
-		if !ctx.PortFoundInSrc && portStr != "" && strings.HasPrefix(relPath, "src/") {
-			// Read text content
+		if isContractSourceFile(relPath) {
 			content, err := os.ReadFile(path)
-			if err == nil && strings.Contains(string(content), portStr) {
-				ctx.PortFoundInSrc = true
+			if err == nil {
+				contentStr := string(content)
+				lowerContent := strings.ToLower(contentStr)
+				if !ctx.PortFoundInSrc && portStr != "" && strings.Contains(contentStr, portStr) {
+					ctx.PortFoundInSrc = true
+				}
+				for port, value := range portStrings {
+					if strings.Contains(contentStr, value) {
+						ctx.PortsFoundInSrc[port] = true
+					}
+				}
+				ctx.collectEndpointSignals(lowerContent)
 			}
 		}
 
@@ -157,9 +206,20 @@ func (ctx *WorkspaceContext) analyzeDockerfile() {
 
 		if matches := workspaceDockerfileExposeRegex.FindStringSubmatch(line); len(matches) >= 2 {
 			ctx.Docker.HasEXPOSE = true
-			if port, err := strconv.Atoi(matches[1]); err == nil {
-				ctx.Docker.Port = port
+			for _, token := range strings.Fields(matches[1]) {
+				if port, ok := parseExposePort(token); ok {
+					ctx.Docker.ExposedPorts = append(ctx.Docker.ExposedPorts, port)
+					if ctx.Docker.Port == 0 {
+						ctx.Docker.Port = port
+					}
+				}
 			}
+		}
+		if workspaceDockerfileUserRegex.MatchString(line) {
+			ctx.Docker.HasUSER = true
+		}
+		if workspaceDockerfileHealthRegex.MatchString(line) {
+			ctx.Docker.HasHEALTHCHECK = true
 		}
 	}
 }
@@ -228,4 +288,116 @@ func (ctx *WorkspaceContext) checkExistence() {
 			ctx.MissingFiles = append(ctx.MissingFiles, file)
 		}
 	}
+}
+
+func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent string) {
+	patterns := append([]string{}, ctx.Contract.EndpointPatterns...)
+	patterns = append(patterns, ctx.Contract.RuntimeAPI.EndpointPatterns...)
+	for _, pattern := range patterns {
+		if pattern != "" && strings.Contains(lowerContent, strings.ToLower(pattern)) {
+			ctx.EndpointSignals.NetworkPattern = true
+			ctx.Main.HasEndpoint = true
+			break
+		}
+	}
+
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		lowerMethod := strings.ToLower(method)
+		if strings.Contains(lowerContent, lowerMethod) {
+			ctx.EndpointSignals.MethodHits[method] = true
+		}
+	}
+
+	endpoints := []domain.EndpointSpec{
+		ctx.Contract.RuntimeAPI.HealthEndpoint,
+		ctx.Contract.RuntimeAPI.OrderEndpoint,
+		ctx.Contract.RuntimeAPI.CancelEndpoint,
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.Path == "" {
+			continue
+		}
+		if endpointPathPresent(lowerContent, endpoint.Path) {
+			ctx.EndpointSignals.PathHits[endpoint.Path] = true
+		}
+		for field := range endpoint.Schema {
+			if strings.Contains(lowerContent, strings.ToLower(field)) {
+				ctx.EndpointSignals.SchemaFieldHits[field] = true
+			}
+		}
+	}
+	if strings.Contains(lowerContent, "content-type") || strings.Contains(lowerContent, "application/json") {
+		ctx.EndpointSignals.SchemaFieldHits["content-type"] = true
+	}
+
+	ws := ctx.Contract.RuntimeAPI.MarketDataStream
+	if ws.Path != "" && endpointPathPresent(lowerContent, ws.Path) {
+		ctx.EndpointSignals.WebSocketPathHits[ws.Path] = true
+	}
+	for _, msgType := range ws.MessageTypes {
+		if strings.Contains(lowerContent, strings.ToLower(msgType)) {
+			ctx.EndpointSignals.WebSocketMessageHits[msgType] = true
+		}
+	}
+	if strings.Contains(lowerContent, "websocket") || strings.Contains(lowerContent, "upgrade") {
+		ctx.EndpointSignals.WebSocketUpgrade = true
+	}
+	if strings.Contains(lowerContent, "ping") || strings.Contains(lowerContent, "pong") || strings.Contains(lowerContent, "heartbeat") {
+		ctx.EndpointSignals.PingHandler = true
+	}
+}
+
+func isContractSourceFile(relPath string) bool {
+	if strings.HasPrefix(relPath, "src/") || strings.HasPrefix(relPath, "include/") {
+		return true
+	}
+	switch filepath.Base(relPath) {
+	case "CMakeLists.txt", "Dockerfile":
+		return true
+	}
+	return false
+}
+
+func parseExposePort(token string) (int, bool) {
+	token = strings.TrimSpace(token)
+	token = strings.Trim(token, `"`)
+	if token == "" {
+		return 0, false
+	}
+	if idx := strings.Index(token, "/"); idx >= 0 {
+		token = token[:idx]
+	}
+	port, err := strconv.Atoi(token)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
+}
+
+func endpointPathPresent(lowerContent, path string) bool {
+	path = strings.ToLower(strings.TrimSpace(path))
+	if path == "" {
+		return false
+	}
+	for _, alias := range endpointPathAliases(path) {
+		if strings.Contains(lowerContent, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func endpointPathAliases(path string) []string {
+	aliases := []string{path}
+	if strings.Contains(path, "{") {
+		base := path
+		if idx := strings.Index(base, "{"); idx >= 0 {
+			base = strings.TrimRight(base[:idx], "/")
+		}
+		if base != "" {
+			aliases = append(aliases, base)
+		}
+	}
+	aliases = append(aliases, strings.ReplaceAll(path, "/", "\\/"))
+	return aliases
 }

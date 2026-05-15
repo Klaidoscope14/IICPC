@@ -19,6 +19,42 @@ func NewLanguageDetector() *LanguageDetector {
 
 func (v *LanguageDetector) Name() string { return "language_detection" }
 
+func (v *LanguageDetector) DetectContext(ctx *WorkspaceContext) domain.LanguageInfo {
+	info := domain.LanguageInfo{
+		Language: "unknown",
+		Runtime:  "unknown",
+		Standard: "unknown",
+	}
+
+	if ctx.CMake.Exists {
+		info.Language = "cpp"
+		if ctx.CMake.StandardVersion != "" {
+			info.Standard = ctx.CMake.StandardVersion
+			info.Runtime = "C++" + ctx.CMake.StandardVersion
+		} else {
+			info.Runtime = "C++"
+		}
+		return info
+	}
+
+	counts := ctx.ExtensionCounts
+	if counts[".cpp"] > 0 || counts[".cc"] > 0 || counts[".cxx"] > 0 {
+		info.Language = "cpp"
+		info.Runtime = "C++"
+	} else if counts[".c"] > 0 {
+		info.Language = "c"
+		info.Runtime = "C"
+	} else if counts[".rs"] > 0 {
+		info.Language = "rust"
+		info.Runtime = "Rust"
+	} else if counts[".go"] > 0 {
+		info.Language = "go"
+		info.Runtime = "Go"
+	}
+
+	return info
+}
+
 // Detect analyzes the project to figure out language and standard.
 func (v *LanguageDetector) Detect(rootDir string) domain.LanguageInfo {
 	info := domain.LanguageInfo{

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/iicpc/validation-service-go/internal/domain"
@@ -13,7 +12,7 @@ import (
 
 var (
 	dockerfileFromRegex   = regexp.MustCompile(`(?i)^\s*FROM\s+`)
-	dockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
+	dockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(.+)$`)
 )
 
 // DockerfileValidator parses the Dockerfile for required instructions.
@@ -29,32 +28,32 @@ func (v *DockerfileValidator) Name() string { return "dockerfile" }
 
 // DockerfileInfo holds extracted information from the Dockerfile.
 type DockerfileInfo struct {
-	HasFROM    bool
-	HasEXPOSE bool
-	Port       int
-	BaseImage  string
+	HasFROM      bool
+	HasEXPOSE    bool
+	Port         int
+	ExposedPorts []int
+	BaseImage    string
 }
 
 func (v *DockerfileValidator) Validate(rootDir string) domain.CheckResult {
+	return v.ValidateContext(AnalyzeWorkspace(rootDir, v.contract))
+}
+
+func (v *DockerfileValidator) ValidateContext(ctx *WorkspaceContext) domain.CheckResult {
 	result := domain.CheckResult{Name: v.Name(), Passed: true}
 
-	dockerfilePath := filepath.Join(rootDir, "Dockerfile")
-	file, err := os.Open(dockerfilePath)
-	if err != nil {
+	if !ctx.Docker.Exists {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "DOCKERFILE_UNREADABLE",
-			Message:  "Cannot read Dockerfile: " + err.Error(),
+			Message:  "Cannot read Dockerfile",
 			Severity: domain.SeverityError,
 			FilePath: "Dockerfile",
 		})
 		return result
 	}
-	defer file.Close()
 
-	info := v.parseDockerfile(file)
-
-	if v.contract.DockerfileRequirements.RequireFROM && !info.HasFROM {
+	if v.contract.DockerfileRequirements.RequireFROM && !ctx.Docker.HasFROM {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "MISSING_FROM",
@@ -64,12 +63,30 @@ func (v *DockerfileValidator) Validate(rootDir string) domain.CheckResult {
 		})
 	}
 
-	if v.contract.DockerfileRequirements.RequireEXPOSE && !info.HasEXPOSE {
+	if v.contract.DockerfileRequirements.RequireEXPOSE && !ctx.Docker.HasEXPOSE {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "MISSING_EXPOSE",
 			Message:  "Dockerfile must contain an EXPOSE instruction for the bot fleet to connect",
 			Severity: domain.SeverityError,
+			FilePath: "Dockerfile",
+		})
+	}
+
+	if v.contract.DockerfileRequirements.WarnIfNoUSER && !ctx.Docker.HasUSER {
+		result.Warnings = append(result.Warnings, domain.ValidationError{
+			Code:     "DOCKER_NO_USER",
+			Message:  "Dockerfile does not switch to a non-root USER; the platform will still apply sandbox limits, but non-root images are safer",
+			Severity: domain.SeverityWarning,
+			FilePath: "Dockerfile",
+		})
+	}
+
+	if v.contract.DockerfileRequirements.WarnIfNoHEALTHCHECK && !ctx.Docker.HasHEALTHCHECK {
+		result.Warnings = append(result.Warnings, domain.ValidationError{
+			Code:     "DOCKER_NO_HEALTHCHECK",
+			Message:  "Dockerfile does not define HEALTHCHECK; the platform will probe the required /health endpoint externally",
+			Severity: domain.SeverityWarning,
 			FilePath: "Dockerfile",
 		})
 	}
@@ -142,8 +159,13 @@ func (v *DockerfileValidator) parseDockerfile(file *os.File) DockerfileInfo {
 
 		if matches := dockerfileExposeRegex.FindStringSubmatch(line); len(matches) >= 2 {
 			info.HasEXPOSE = true
-			if port, err := strconv.Atoi(matches[1]); err == nil {
-				info.Port = port
+			for _, token := range strings.Fields(matches[1]) {
+				if port, ok := parseExposePort(token); ok {
+					info.ExposedPorts = append(info.ExposedPorts, port)
+					if info.Port == 0 {
+						info.Port = port
+					}
+				}
 			}
 		}
 	}

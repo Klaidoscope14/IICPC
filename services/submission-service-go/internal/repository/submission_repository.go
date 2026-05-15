@@ -22,7 +22,53 @@ func NewPostgresSubmissionRepository(db *sqlx.DB) *postgresSubmissionRepository 
 }
 
 func (r *postgresSubmissionRepository) Create(ctx context.Context, submission *domain.Submission) error {
-	metadataJSON, err := json.Marshal(submission.Metadata)
+	if submission.Version == 0 {
+		submission.Version = 1
+	}
+	if err := r.insertSubmission(ctx, r.db, submission); err != nil {
+		return fmt.Errorf("failed to create submission: %w", err)
+	}
+	return nil
+}
+
+// CreateWithNextVersion serializes version assignment per contestant and inserts
+// the submission in one transaction. This avoids races when a team retries or
+// submits multiple versions concurrently.
+func (r *postgresSubmissionRepository) CreateWithNextVersion(ctx context.Context, submission *domain.Submission) error {
+	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return fmt.Errorf("failed to begin submission transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, submission.ContestantID); err != nil {
+		return fmt.Errorf("failed to lock contestant version stream: %w", err)
+	}
+
+	if err := tx.QueryRowxContext(ctx, `
+		SELECT COALESCE(MAX(version), 0) + 1
+		FROM submissions
+		WHERE contestant_id = $1 AND status != 'deleted'
+	`, submission.ContestantID).Scan(&submission.Version); err != nil {
+		return fmt.Errorf("failed to assign next version: %w", err)
+	}
+
+	if err := r.insertSubmission(ctx, tx, submission); err != nil {
+		return fmt.Errorf("failed to create submission: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit submission transaction: %w", err)
+	}
+	return nil
+}
+
+type submissionExecutor interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+}
+
+func (r *postgresSubmissionRepository) insertSubmission(ctx context.Context, exec submissionExecutor, submission *domain.Submission) error {
+	metadataJSON, err := marshalStringMap(submission.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
@@ -39,7 +85,7 @@ func (r *postgresSubmissionRepository) Create(ctx context.Context, submission *d
 		submission.Language,
 		submission.Status,
 		submission.Version,
-		submission.CodeArchive,
+		nil,
 		submission.Dockerfile,
 		submission.Checksum,
 		submission.OriginalFilename,
@@ -51,7 +97,7 @@ func (r *postgresSubmissionRepository) Create(ctx context.Context, submission *d
 		submission.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create submission: %w", err)
+		return err
 	}
 
 	return nil
@@ -59,7 +105,7 @@ func (r *postgresSubmissionRepository) Create(ctx context.Context, submission *d
 
 func (r *postgresSubmissionRepository) GetByID(ctx context.Context, id string) (*domain.Submission, error) {
 	query := `
-		SELECT id, contestant_id, team_name, language, status, version, code_archive, dockerfile,
+		SELECT id, contestant_id, team_name, language, status, version, dockerfile,
 		       checksum, original_filename, file_size, storage_path, idempotency_key, metadata, created_at, updated_at
 		FROM submissions
 		WHERE id = $1 AND status != 'deleted'
@@ -76,7 +122,6 @@ func (r *postgresSubmissionRepository) GetByID(ctx context.Context, id string) (
 		&submission.Language,
 		&submission.Status,
 		&submission.Version,
-		&submission.CodeArchive,
 		&submission.Dockerfile,
 		&submission.Checksum,
 		&submission.OriginalFilename,
@@ -172,6 +217,9 @@ func (r *postgresSubmissionRepository) List(ctx context.Context, contestantID st
 
 		submissions = append(submissions, &submission)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate submissions: %w", err)
+	}
 
 	return submissions, nil
 }
@@ -180,12 +228,19 @@ func (r *postgresSubmissionRepository) UpdateStatus(ctx context.Context, id stri
 	query := `
 		UPDATE submissions
 		SET status = $1, updated_at = $2
-		WHERE id = $3
+		WHERE id = $3 AND status != 'deleted'
 	`
 
-	_, err := r.db.ExecContext(ctx, query, status, time.Now(), id)
+	result, err := r.db.ExecContext(ctx, query, status, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to update submission status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: submission %s", domain.ErrNotFound, id)
 	}
 
 	return nil
@@ -323,17 +378,23 @@ func (r *postgresSubmissionRepository) GetByIdempotencyKey(ctx context.Context, 
 
 // CreateSubmissionLog persists a log entry associated with a submission.
 func (r *postgresSubmissionRepository) CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error {
+	metadataJSON, err := marshalStringMap(log.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal log metadata: %w", err)
+	}
+
 	query := `
-		INSERT INTO submission_logs (id, submission_id, log_type, message, level, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO submission_logs (id, submission_id, log_type, message, level, metadata, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 
-	_, err := r.db.ExecContext(ctx, query,
+	_, err = r.db.ExecContext(ctx, query,
 		log.ID,
 		log.SubmissionID,
 		log.LogType,
 		log.Message,
 		log.Level,
+		metadataJSON,
 		log.CreatedAt,
 	)
 	if err != nil {
@@ -341,6 +402,54 @@ func (r *postgresSubmissionRepository) CreateSubmissionLog(ctx context.Context, 
 	}
 
 	return nil
+}
+
+// ListSubmissionLogs returns paginated logs for one submission, newest first.
+func (r *postgresSubmissionRepository) ListSubmissionLogs(ctx context.Context, submissionID string, limit, offset int) ([]*domain.SubmissionLog, error) {
+	query := `
+		SELECT id, submission_id, log_type, message, level, metadata, created_at
+		FROM submission_logs
+		WHERE submission_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, submissionID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list submission logs: %w", err)
+	}
+	defer rows.Close()
+
+	logs := make([]*domain.SubmissionLog, 0, limit)
+	for rows.Next() {
+		var log domain.SubmissionLog
+		var metadataJSON []byte
+		if err := rows.Scan(
+			&log.ID,
+			&log.SubmissionID,
+			&log.LogType,
+			&log.Message,
+			&log.Level,
+			&metadataJSON,
+			&log.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan submission log: %w", err)
+		}
+		if len(metadataJSON) > 0 {
+			if err := json.Unmarshal(metadataJSON, &log.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal log metadata: %w", err)
+			}
+		}
+		if log.Metadata == nil {
+			log.Metadata = map[string]string{}
+		}
+		logs = append(logs, &log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate submission logs: %w", err)
+	}
+
+	return logs, nil
 }
 
 // nullString converts a Go string to a sql.NullString for nullable VARCHAR columns.
@@ -351,3 +460,9 @@ func nullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+func marshalStringMap(values map[string]string) ([]byte, error) {
+	if values == nil {
+		values = map[string]string{}
+	}
+	return json.Marshal(values)
+}

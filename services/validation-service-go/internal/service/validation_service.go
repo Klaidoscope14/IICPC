@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	contractvalidation "github.com/iicpc/pkg/contracts/validation"
 	"github.com/iicpc/pkg/events"
 	"github.com/iicpc/validation-service-go/internal/domain"
 	"github.com/iicpc/validation-service-go/internal/extractor"
@@ -15,11 +16,12 @@ import (
 )
 
 type ValidationService struct {
-	repo       ValidationRepository
-	storage    StorageClient
-	pipeline   *validator.Pipeline
-	extractor  *extractor.Extractor
-	producer   *events.Producer
+	repo      ValidationRepository
+	storage   StorageClient
+	contract  *domain.SubmissionContract
+	pipeline  *validator.Pipeline
+	extractor *extractor.Extractor
+	producer  *events.Producer
 }
 
 func NewValidationService(
@@ -31,10 +33,20 @@ func NewValidationService(
 	return &ValidationService{
 		repo:      repo,
 		storage:   storage,
+		contract:  contract,
 		pipeline:  validator.NewPipeline(contract),
 		extractor: extractor.NewExtractor(contract.MaxExtractedBytes, contract.MaxFileCount),
 		producer:  eventProducer,
 	}
+}
+
+// Contract returns the active submission contract used by the validation engine.
+func (s *ValidationService) Contract() domain.SubmissionContract {
+	if s.contract == nil {
+		return domain.DefaultContract
+	}
+	contract := *s.contract
+	return contract
 }
 
 // ValidateSubmission handles the full lifecycle of validating a submission.
@@ -102,6 +114,8 @@ func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID
 		Runtime:      report.Runtime,
 		ErrorCount:   report.TotalErrors,
 		WarningCount: report.TotalWarnings,
+		Errors:       toContractFindings(valResult.Errors),
+		Warnings:     toContractFindings(valResult.Warnings),
 		ValidatedAt:  now,
 	}
 
@@ -117,7 +131,7 @@ func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID
 // failValidation is a helper to immediately fail a validation if pre-pipeline steps fail (e.g. extraction size bomb).
 func (s *ValidationService) failValidation(ctx context.Context, submissionID, code, message string) error {
 	now := time.Now()
-	
+
 	report := &domain.ValidationReport{
 		SubmissionID: submissionID,
 		Status:       domain.ValidationFailed,
@@ -160,10 +174,24 @@ func (s *ValidationService) failValidation(ctx context.Context, submissionID, co
 		Runtime:      "unknown",
 		ErrorCount:   1,
 		WarningCount: 0,
+		Errors:       toContractFindings(report.CheckResults["pre_flight"].Errors),
 		ValidatedAt:  now,
 	}
 	_ = s.producer.PublishValidationCompleted(ctx, event)
 
 	slog.Error("Validation failed during pre-flight", "submission_id", submissionID, "code", code, "message", message)
 	return fmt.Errorf("validation failed: %s", message)
+}
+
+func toContractFindings(errors []domain.ValidationError) []contractvalidation.Finding {
+	findings := make([]contractvalidation.Finding, 0, len(errors))
+	for _, err := range errors {
+		findings = append(findings, contractvalidation.Finding{
+			Code:     err.Code,
+			Message:  err.Message,
+			Severity: contractvalidation.Severity(err.Severity),
+			FilePath: err.FilePath,
+		})
+	}
+	return findings
 }

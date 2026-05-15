@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/iicpc/submission-service-go/internal/domain"
 	"github.com/iicpc/submission-service-go/internal/service"
 )
+
+const multipartMemoryLimit = 8 << 20
 
 // SubmissionHandler handles HTTP requests for submission operations.
 type SubmissionHandler struct {
@@ -33,8 +36,11 @@ func (h *SubmissionHandler) RegisterRoutes(r *gin.Engine) {
 		submissions := api.Group("/submissions")
 		{
 			submissions.POST("", h.UploadSubmission)
-			submissions.GET("/:id", h.GetSubmission)
 			submissions.GET("", h.ListSubmissions)
+			submissions.GET("/:id/status", h.GetSubmissionStatus)
+			submissions.GET("/:id/archive", h.DownloadSubmissionArchive)
+			submissions.GET("/:id/logs", h.ListSubmissionLogs)
+			submissions.GET("/:id", h.GetSubmission)
 			submissions.PATCH("/:id/status", h.UpdateStatus)
 			submissions.DELETE("/:id", h.DeleteSubmission)
 		}
@@ -69,14 +75,19 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	// Parse multipart form with max upload size.
-	if err := c.Request.ParseMultipartForm(h.maxUploadBytes); err != nil {
-		if err.Error() == "http: request body too large" {
+	// Keep multipart memory bounded; larger parts spill to disk while MaxBytesReader
+	// enforces the true request limit.
+	if err := c.Request.ParseMultipartForm(multipartMemoryLimit); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) || err.Error() == "http: request body too large" {
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file exceeds maximum upload size"})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse multipart form"})
 		return
+	}
+	if c.Request.MultipartForm != nil {
+		defer c.Request.MultipartForm.RemoveAll()
 	}
 
 	contestantID := c.PostForm("contestant_id")
@@ -97,16 +108,6 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Read file into memory for validation + storage pipeline.
-	// The service layer streams this through validate → hash → write.
-	codeBytes := make([]byte, fileHeader.Size)
-	n, err := file.Read(codeBytes)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read uploaded file"})
-		return
-	}
-	codeBytes = codeBytes[:n]
-
 	// Extract Idempotency-Key header for retry support.
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 
@@ -114,7 +115,7 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 		ContestantID:     contestantID,
 		TeamName:         teamName,
 		Language:         language,
-		CodeArchive:      codeBytes,
+		ArchiveReader:    file,
 		Dockerfile:       dockerfile,
 		OriginalFilename: fileHeader.Filename,
 		FileSize:         fileHeader.Size,
@@ -161,6 +162,57 @@ func (h *SubmissionHandler) GetSubmission(c *gin.Context) {
 	c.JSON(http.StatusOK, submission)
 }
 
+func (h *SubmissionHandler) GetSubmissionStatus(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+		return
+	}
+
+	submission, err := h.service.GetSubmission(ctx, id)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":         submission.ID,
+		"status":     submission.Status,
+		"version":    submission.Version,
+		"updated_at": submission.UpdatedAt,
+	})
+}
+
+func (h *SubmissionHandler) DownloadSubmissionArchive(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+		return
+	}
+
+	submission, archive, err := h.service.GetSubmissionArchive(ctx, id)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	defer archive.Close()
+
+	filename := submission.OriginalFilename
+	if filename == "" {
+		filename = submission.ID + ".zip"
+	}
+
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	c.Header("X-Checksum-SHA256", submission.Checksum)
+	c.DataFromReader(http.StatusOK, submission.FileSize, "application/zip", archive, nil)
+}
+
 func (h *SubmissionHandler) ListSubmissions(c *gin.Context) {
 	// Per-request timeout for reads (5 seconds).
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -183,6 +235,33 @@ func (h *SubmissionHandler) ListSubmissions(c *gin.Context) {
 		"page":        page,
 		"page_size":   pageSize,
 		"count":       len(submissions),
+	})
+}
+
+func (h *SubmissionHandler) ListSubmissionLogs(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+
+	logs, err := h.service.ListSubmissionLogs(ctx, id, page, pageSize)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logs":      logs,
+		"page":      page,
+		"page_size": pageSize,
+		"count":     len(logs),
 	})
 }
 
@@ -249,4 +328,3 @@ func (h *SubmissionHandler) handleError(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }
-

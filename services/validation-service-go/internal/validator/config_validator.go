@@ -1,20 +1,6 @@
 package validator
 
-import (
-	"bufio"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-
-	"github.com/iicpc/validation-service-go/internal/domain"
-)
-
-var (
-	cmakeProjectRegex    = regexp.MustCompile(`(?i)^\s*project\s*\(`)
-	cmakeStandardRegex   = regexp.MustCompile(`(?i)^\s*set\s*\(\s*CMAKE_CXX_STANDARD\s+(\d+)`)
-	cmakeExecutableRegex = regexp.MustCompile(`(?i)^\s*add_executable\s*\(`)
-)
+import "github.com/iicpc/validation-service-go/internal/domain"
 
 // ConfigValidator checks CMakeLists.txt for required project setup.
 type ConfigValidator struct {
@@ -28,43 +14,24 @@ func NewConfigValidator(contract *domain.SubmissionContract) *ConfigValidator {
 func (v *ConfigValidator) Name() string { return "build_config" }
 
 func (v *ConfigValidator) Validate(rootDir string) domain.CheckResult {
+	return v.ValidateContext(AnalyzeWorkspace(rootDir, v.contract))
+}
+
+func (v *ConfigValidator) ValidateContext(ctx *WorkspaceContext) domain.CheckResult {
 	result := domain.CheckResult{Name: v.Name(), Passed: true}
 
-	cmakePath := filepath.Join(rootDir, "CMakeLists.txt")
-	file, err := os.Open(cmakePath)
-	if err != nil {
+	if !ctx.CMake.Exists {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "CMAKE_UNREADABLE",
-			Message:  "Cannot read CMakeLists.txt: " + err.Error(),
+			Message:  "Cannot read CMakeLists.txt",
 			Severity: domain.SeverityError,
 			FilePath: "CMakeLists.txt",
 		})
 		return result
 	}
-	defer file.Close()
 
-	var hasProject, hasStandard, hasExecutable bool
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		if cmakeProjectRegex.MatchString(line) {
-			hasProject = true
-		}
-		if cmakeStandardRegex.MatchString(line) {
-			hasStandard = true
-		}
-		if cmakeExecutableRegex.MatchString(line) {
-			hasExecutable = true
-		}
-	}
-
-	if v.contract.CMakeRequirements.RequireProject && !hasProject {
+	if v.contract.CMakeRequirements.RequireProject && !ctx.CMake.HasProject {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "CMAKE_NO_PROJECT",
@@ -74,7 +41,7 @@ func (v *ConfigValidator) Validate(rootDir string) domain.CheckResult {
 		})
 	}
 
-	if v.contract.CMakeRequirements.RequireCXXStandard && !hasStandard {
+	if v.contract.CMakeRequirements.RequireCXXStandard && !ctx.CMake.HasStandard {
 		// Just a warning, they might be relying on compiler defaults or target_compile_features
 		result.Warnings = append(result.Warnings, domain.ValidationError{
 			Code:     "CMAKE_NO_STANDARD",
@@ -84,7 +51,7 @@ func (v *ConfigValidator) Validate(rootDir string) domain.CheckResult {
 		})
 	}
 
-	if v.contract.CMakeRequirements.RequireAddExecutable && !hasExecutable {
+	if v.contract.CMakeRequirements.RequireAddExecutable && !ctx.CMake.HasExecutable {
 		result.Passed = false
 		result.Errors = append(result.Errors, domain.ValidationError{
 			Code:     "CMAKE_NO_EXECUTABLE",
