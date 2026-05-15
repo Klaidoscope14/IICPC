@@ -284,9 +284,9 @@ func (r *postgresRepository) ListBenchmarksBySubmission(ctx context.Context, sub
 
 func (r *postgresRepository) InsertTelemetrySnapshot(ctx context.Context, benchmarkID string, m *domain.TelemetryMetrics) error {
 	query := `
-		INSERT INTO telemetry_snapshots (benchmark_id, current_tps, avg_latency_ms, p50_latency_ms, p90_latency_ms, p99_latency_ms,
+		INSERT INTO telemetry_snapshots (benchmark_id, timestamp, current_tps, avg_latency_ms, p50_latency_ms, p90_latency_ms, p99_latency_ms,
 			total_orders_sent, total_orders_acknowledged, total_errors, active_connections, cpu_usage_percent, memory_usage_mb)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -304,24 +304,56 @@ func (r *postgresRepository) InsertTelemetrySnapshot(ctx context.Context, benchm
 // --- Results ---
 
 func (r *postgresRepository) UpsertBenchmarkResult(ctx context.Context, result *domain.BenchmarkResult) error {
-	query := `
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin benchmark result transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	historyQuery := `
+		INSERT INTO benchmark_history (id, submission_id, benchmark_id, tps, p50_latency_ms, p90_latency_ms, p99_latency_ms,
+			correctness_score, total_orders, failed_orders, composite_score, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (benchmark_id) DO UPDATE SET
+			tps = EXCLUDED.tps,
+			p50_latency_ms = EXCLUDED.p50_latency_ms,
+			p90_latency_ms = EXCLUDED.p90_latency_ms,
+			p99_latency_ms = EXCLUDED.p99_latency_ms,
+			correctness_score = EXCLUDED.correctness_score,
+			total_orders = EXCLUDED.total_orders,
+			failed_orders = EXCLUDED.failed_orders,
+			composite_score = EXCLUDED.composite_score,
+			created_at = EXCLUDED.created_at
+	`
+
+	_, err = tx.ExecContext(ctx, historyQuery,
+		result.ID, result.SubmissionID, result.BenchmarkID,
+		result.TPS, result.P50LatencyMs, result.P90LatencyMs, result.P99LatencyMs,
+		result.CorrectnessScore, result.TotalOrders, result.FailedOrders,
+		result.CompositeScore, result.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert benchmark history: %w", err)
+	}
+
+	currentQuery := `
 		INSERT INTO benchmark_results (id, submission_id, benchmark_id, tps, p50_latency_ms, p90_latency_ms, p99_latency_ms,
 			correctness_score, total_orders, failed_orders, composite_score, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (submission_id) DO UPDATE SET
-			benchmark_id = $3,
-			tps = $4,
-			p50_latency_ms = $5,
-			p90_latency_ms = $6,
-			p99_latency_ms = $7,
-			correctness_score = $8,
-			total_orders = $9,
-			failed_orders = $10,
-			composite_score = $11,
-			created_at = $12
+			benchmark_id = EXCLUDED.benchmark_id,
+			tps = EXCLUDED.tps,
+			p50_latency_ms = EXCLUDED.p50_latency_ms,
+			p90_latency_ms = EXCLUDED.p90_latency_ms,
+			p99_latency_ms = EXCLUDED.p99_latency_ms,
+			correctness_score = EXCLUDED.correctness_score,
+			total_orders = EXCLUDED.total_orders,
+			failed_orders = EXCLUDED.failed_orders,
+			composite_score = EXCLUDED.composite_score,
+			created_at = EXCLUDED.created_at
 	`
 
-	_, err := r.db.ExecContext(ctx, query,
+	_, err = tx.ExecContext(ctx, currentQuery,
 		result.ID, result.SubmissionID, result.BenchmarkID,
 		result.TPS, result.P50LatencyMs, result.P90LatencyMs, result.P99LatencyMs,
 		result.CorrectnessScore, result.TotalOrders, result.FailedOrders,
@@ -330,24 +362,27 @@ func (r *postgresRepository) UpsertBenchmarkResult(ctx context.Context, result *
 	if err != nil {
 		return fmt.Errorf("failed to upsert benchmark result: %w", err)
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit benchmark result transaction: %w", err)
+	}
 	return nil
 }
 
 func (r *postgresRepository) GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error) {
 	query := `
 		SELECT
-			s.team_name,
-			br.tps,
-			br.p50_latency_ms,
-			br.p90_latency_ms,
-			br.p99_latency_ms,
-			br.correctness_score,
-			br.total_orders,
-			br.failed_orders,
-			br.composite_score
-		FROM benchmark_results br
-		JOIN submissions s ON s.id = br.submission_id
-		ORDER BY br.composite_score DESC
+			team_name,
+			tps,
+			p50_latency_ms,
+			p90_latency_ms,
+			p99_latency_ms,
+			correctness_score,
+			total_orders,
+			failed_orders,
+			composite_score
+		FROM leaderboard
+		ORDER BY rank ASC
 		LIMIT $1
 	`
 

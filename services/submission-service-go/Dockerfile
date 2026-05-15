@@ -2,16 +2,18 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
 
+COPY go.work go.work.sum ./
 COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY services/api-gateway-go/go.mod services/api-gateway-go/go.sum ./services/api-gateway-go/
+COPY services/benchmark-orchestrator-go/go.mod services/benchmark-orchestrator-go/go.sum ./services/benchmark-orchestrator-go/
 COPY services/submission-service-go/go.mod services/submission-service-go/go.sum ./services/submission-service-go/
-WORKDIR /src/services/submission-service-go
-RUN go mod download
+COPY services/validation-service-go/go.mod services/validation-service-go/go.sum ./services/validation-service-go/
+RUN go work sync
 
 WORKDIR /src
 COPY pkg ./pkg
 COPY services/submission-service-go ./services/submission-service-go
-WORKDIR /src/services/submission-service-go
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/submission-service ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/submission-service ./services/submission-service-go/cmd/main.go
 
 FROM alpine:3.20
 

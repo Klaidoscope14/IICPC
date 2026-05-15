@@ -11,6 +11,6 @@ fi
 
 cd "$COMPOSE_DIR"
 
-docker compose up -d --build
+docker compose --env-file .env up -d --build
 
 "$ROOT_DIR/scripts/healthcheck.sh"

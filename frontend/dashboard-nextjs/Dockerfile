@@ -11,6 +11,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 COPY . .
+RUN mkdir -p public
 RUN npm run build
 
 FROM node:18-alpine AS runner

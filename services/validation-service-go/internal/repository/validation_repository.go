@@ -30,7 +30,8 @@ func (r *postgresValidationRepository) SaveResult(ctx context.Context, result *d
 		) VALUES (
 			:id, :submission_id, :status, :language, :runtime, :errors, :warnings, :report, :validated_at, NOW(), NOW()
 		)
-		ON CONFLICT (id) DO UPDATE SET
+		ON CONFLICT (submission_id) DO UPDATE SET
+			id = EXCLUDED.id,
 			status = EXCLUDED.status,
 			language = EXCLUDED.language,
 			runtime = EXCLUDED.runtime,
@@ -126,11 +127,13 @@ func (r *postgresValidationRepository) GetResult(ctx context.Context, submission
 
 func (r *postgresValidationRepository) UpdateStatus(ctx context.Context, submissionID string, status domain.ValidationStatus) error {
 	query := `
-		UPDATE validation_results 
-		SET status = $1, updated_at = NOW()
-		WHERE submission_id = $2
+		INSERT INTO validation_results (id, submission_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		ON CONFLICT (submission_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			updated_at = NOW()
 	`
-	_, err := r.db.ExecContext(ctx, query, status, submissionID)
+	_, err := r.db.ExecContext(ctx, query, uuid.NewString(), submissionID, status)
 	return err
 }
 
@@ -146,4 +149,3 @@ func (r *postgresValidationRepository) GetSubmissionStoragePath(ctx context.Cont
 	}
 	return storagePath, nil
 }
-

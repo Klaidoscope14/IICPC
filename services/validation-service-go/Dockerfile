@@ -4,16 +4,18 @@ WORKDIR /src
 
 RUN apk add --no-cache build-base
 
+COPY go.work go.work.sum ./
 COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY services/api-gateway-go/go.mod services/api-gateway-go/go.sum ./services/api-gateway-go/
+COPY services/benchmark-orchestrator-go/go.mod services/benchmark-orchestrator-go/go.sum ./services/benchmark-orchestrator-go/
+COPY services/submission-service-go/go.mod services/submission-service-go/go.sum ./services/submission-service-go/
 COPY services/validation-service-go/go.mod services/validation-service-go/go.sum ./services/validation-service-go/
-WORKDIR /src/services/validation-service-go
-RUN go mod download
+RUN go work sync
 
 WORKDIR /src
 COPY pkg ./pkg
 COPY services/validation-service-go ./services/validation-service-go
-WORKDIR /src/services/validation-service-go
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/validation-service ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/validation-service ./services/validation-service-go/cmd/main.go
 
 FROM alpine:3.20
 

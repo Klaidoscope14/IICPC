@@ -2,7 +2,7 @@ name: iicpc
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: timescale/timescaledb:2.17.2-pg15
     container_name: iicpc-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -22,6 +22,8 @@ services:
     command:
       - postgres
       - -c
+      - shared_preload_libraries=timescaledb
+      - -c
       - max_connections=200
       - -c
       - shared_buffers=256MB
@@ -29,6 +31,10 @@ services:
       - effective_cache_size=768MB
       - -c
       - synchronous_commit=off
+      - -c
+      - wal_compression=on
+      - -c
+      - random_page_cost=1.1
 
   redis:
     image: redis:7-alpine
