@@ -9,8 +9,11 @@ import (
 type Config struct {
 	Port                 string
 	SubmissionServiceURL string
+	ValidationServiceURL string
 	OrchestratorURL      string
 	RateLimitPerMinute   int
+	MaxBodyBytes         int64
+	AuthToken            string
 }
 
 // Load reads gateway configuration from environment variables.
@@ -18,8 +21,11 @@ func Load() *Config {
 	return &Config{
 		Port:                 getEnv("SERVER_PORT", "8082"),
 		SubmissionServiceURL: getEnv("SUBMISSION_SERVICE_URL", "http://localhost:8080"),
+		ValidationServiceURL: getEnv("VALIDATION_SERVICE_URL", "http://localhost:8084"),
 		OrchestratorURL:      getEnv("ORCHESTRATOR_URL", "http://localhost:8081"),
 		RateLimitPerMinute:   getEnvAsInt("RATE_LIMIT_PER_MINUTE", 600),
+		MaxBodyBytes:         int64(getEnvAsInt("MAX_BODY_SIZE_MB", 64)) * 1024 * 1024,
+		AuthToken:            getEnv("API_AUTH_TOKEN", ""),
 	}
 }
 
