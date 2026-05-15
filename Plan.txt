@@ -1,3 +1,58 @@
+# Shared Contracts / Proto-
+1. gRPC proto definitions
+2. DTO contracts
+3. Event schemas
+4. Shared response models
+5. Internal API contracts
+
+------------------------------------------------
+
+# DevOps / Infra-
+1. Docker Compose setup
+2. Environment configs
+3. Secrets management
+4. CI pipeline
+5. Service startup scripts
+6. Health checks
+7. Shared config system
+
+------------------------------------------------
+
+# Database (Postgres + TimescaleDB)-
+1. Submission table
+2. Validation results table
+3. Benchmark runs table
+4. Metrics table
+5. Leaderboard table
+6. Benchmark history table
+7. Logs metadata table
+8. Team metadata table
+
+------------------------------------------------
+
+# Redis / Event Bus-
+1. Submission uploaded event
+2. Validation complete event
+3. Engine ready event
+4. Benchmark started event
+5. Benchmark finished event
+6. Telemetry events
+7. Leaderboard update event
+
+------------------------------------------------
+
+# Submission Contract Engine-
+1. Define required folder structure
+2. Define required API schema
+3. Define required WebSocket schema
+4. Define required health endpoint
+5. Define required port exposure rules
+6. Define Docker requirements
+7. Generate validation errors
+8. Generate submission compatibility report
+
+------------------------------------------------
+
 # Submission Service-
 1. Upload API endpoint
 2. Upload size limits
@@ -16,6 +71,20 @@
 15. Submission logs metadata
 16. Upload retry support
 17. Health endpoint
+
+------------------------------------------------
+
+# API Gateway-
+1. REST routing
+2. Authentication middleware (optional MVP)
+3. Request validation
+4. Rate limiting
+5. Reverse proxy for services
+6. Health check endpoint
+7. Error normalization
+8. Logging middleware
+9. WebSocket proxying
+10. API versioning
 
 ------------------------------------------------
 
@@ -38,29 +107,27 @@
 
 ------------------------------------------------
 
-# API Gateway-
-1. REST routing
-2. Authentication middleware (optional MVP)
-3. Request validation
-4. Rate limiting
-5. Reverse proxy for services
-6. Health check endpoint
-7. Error normalization
-8. Logging middleware
-9. WebSocket proxying
-10. API versioning
+# Docker / Sandbox-
+1. Secure container execution
+2. CPU pinning
+3. Memory limits
+4. Read-only filesystem
+5. Network isolation
+6. Timeout enforcement
+7. Auto cleanup
+8. Sandboxed execution
+9. Docker image management
 
 ------------------------------------------------
 
-# Submission Contract Engine-
-1. Define required folder structure
-2. Define required API schema
-3. Define required WebSocket schema
-4. Define required health endpoint
-5. Define required port exposure rules
-6. Define Docker requirements
-7. Generate validation errors
-8. Generate submission compatibility report
+# Security-
+1. Upload validation
+2. File sanitization
+3. Restricted execution
+4. Resource abuse prevention
+5. Timeout enforcement
+6. Dangerous file blocking
+7. Sandboxed runtime
 
 ------------------------------------------------
 
@@ -88,6 +155,68 @@
 
 ------------------------------------------------
 
+# Logging System-
+1. Build logs capture
+2. Container runtime logs
+3. Benchmark execution logs
+4. Validation logs
+5. Error logs
+6. Structured logging
+7. Log streaming to frontend
+8. Log persistence
+
+------------------------------------------------
+
+# Frontend-
+ 1.⁠ ⁠Home page
+ 2.⁠ ⁠Drag & drop upload page
+ 3.⁠ ⁠Leaderboard page
+ 4.⁠ ⁠Benchmarks page
+ 5.⁠ ⁠Submission details page
+ 6.⁠ ⁠Benchmark execution page
+ 7.⁠ ⁠Shared navbar, layout and theme
+ 8.⁠ ⁠Error state UI
+ 9.⁠ ⁠Loading states & skeletons
+10.⁠ ⁠Submission status component
+11.⁠ ⁠Container logs viewer
+12.⁠ ⁠Benchmark metrics dashboard
+13.⁠ ⁠Real-time latency graphs
+14.⁠ ⁠TPS graphs
+15.⁠ ⁠Success/failure rate cards
+16.⁠ ⁠Benchmark presets selector
+17.⁠ ⁠Benchmark history page
+18.⁠ ⁠WebSocket integration
+19.⁠ ⁠Mock API endpoints
+20.⁠ ⁠Responsive design
+21.⁠ ⁠Empty state UI
+22.⁠ ⁠Retry/failure UX
+23.⁠ ⁠Dark mode
+24.⁠ ⁠System status dashboard
+
+------------------------------------------------
+
+# WebSocket Service-
+1. Live benchmark updates
+2. Live leaderboard updates
+3. Container status updates
+4. Telemetry stream
+5. Retry connection handling
+6. Connection heartbeat
+7. Reconnection support
+
+------------------------------------------------
+
+# Benchmark Presets-
+1. Low volatility simulation
+2. Medium market traffic
+3. High-frequency burst
+4. Market open chaos
+5. Flash crash simulation
+6. Stress overload benchmark
+7. Custom benchmark config
+
+------------------------------------------------
+
 # Bot Fleet Service (C++)-
 1. WebSocket bot client
 2. REST bot client
@@ -110,17 +239,6 @@
 19. Distributed bot workers
 20. Publish telemetry events
 21. Health endpoint
-
-------------------------------------------------
-
-# Benchmark Presets-
-1. Low volatility simulation
-2. Medium market traffic
-3. High-frequency burst
-4. Market open chaos
-5. Flash crash simulation
-6. Stress overload benchmark
-7. Custom benchmark config
 
 ------------------------------------------------
 
@@ -184,62 +302,13 @@
 
 ------------------------------------------------
 
-# Logging System-
-1. Build logs capture
-2. Container runtime logs
-3. Benchmark execution logs
-4. Validation logs
-5. Error logs
-6. Structured logging
-7. Log streaming to frontend
-8. Log persistence
-
-------------------------------------------------
-
-# WebSocket Service-
-1. Live benchmark updates
-2. Live leaderboard updates
-3. Container status updates
-4. Telemetry stream
-5. Retry connection handling
-6. Connection heartbeat
-7. Reconnection support
-
-------------------------------------------------
-
-# Database (Postgres + TimescaleDB)-
-1. Submission table
-2. Validation results table
-3. Benchmark runs table
-4. Metrics table
-5. Leaderboard table
-6. Benchmark history table
-7. Logs metadata table
-8. Team metadata table
-
-------------------------------------------------
-
-# Redis / Event Bus-
-1. Submission uploaded event
-2. Validation complete event
-3. Engine ready event
-4. Benchmark started event
-5. Benchmark finished event
-6. Telemetry events
-7. Leaderboard update event
-
-------------------------------------------------
-
-# Docker / Sandbox-
-1. Secure container execution
-2. CPU pinning
-3. Memory limits
-4. Read-only filesystem
-5. Network isolation
-6. Timeout enforcement
-7. Auto cleanup
-8. Sandboxed execution
-9. Docker image management
+# Observability-
+1. Prometheus metrics
+2. Grafana dashboards
+3. Service health monitoring
+4. Benchmark monitoring
+5. Alerting (optional)
+6. Distributed tracing (optional)
 
 ------------------------------------------------
 
@@ -252,47 +321,6 @@
 6. Deployment configs
 7. HPA autoscaling
 8. Rolling updates
-
-------------------------------------------------
-
-# Observability-
-1. Prometheus metrics
-2. Grafana dashboards
-3. Service health monitoring
-4. Benchmark monitoring
-5. Alerting (optional)
-6. Distributed tracing (optional)
-
-------------------------------------------------
-
-# Security-
-1. Upload validation
-2. File sanitization
-3. Restricted execution
-4. Resource abuse prevention
-5. Timeout enforcement
-6. Dangerous file blocking
-7. Sandboxed runtime
-
-------------------------------------------------
-
-# DevOps / Infra-
-1. Docker Compose setup
-2. Environment configs
-3. Secrets management
-4. CI pipeline
-5. Service startup scripts
-6. Health checks
-7. Shared config system
-
-------------------------------------------------
-
-# Shared Contracts / Proto-
-1. gRPC proto definitions
-2. DTO contracts
-3. Event schemas
-4. Shared response models
-5. Internal API contracts
 
 ------------------------------------------------
 

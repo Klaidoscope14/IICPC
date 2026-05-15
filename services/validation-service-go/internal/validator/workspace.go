@@ -4,20 +4,20 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
-	"regexp"
 
 	"github.com/iicpc/validation-service-go/internal/domain"
 )
 
 var (
-	dockerfileFromRegex   = regexp.MustCompile(`(?i)^\s*FROM\s+`)
-	dockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
-	cmakeProjectRegex     = regexp.MustCompile(`(?i)^\s*project\s*\(`)
-	cmakeStandardRegex    = regexp.MustCompile(`(?i)^\s*set\s*\(\s*CMAKE_CXX_STANDARD\s+(\d+)`)
-	cmakeExecutableRegex  = regexp.MustCompile(`(?i)^\s*add_executable\s*\(`)
-	mainFunctionRegex     = regexp.MustCompile(`(?m)^int\s+main\s*\(`)
+	workspaceDockerfileFromRegex   = regexp.MustCompile(`(?i)^\s*FROM\s+`)
+	workspaceDockerfileExposeRegex = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
+	workspaceCMakeProjectRegex     = regexp.MustCompile(`(?i)^\s*project\s*\(`)
+	workspaceCMakeStandardRegex    = regexp.MustCompile(`(?i)^\s*set\s*\(\s*CMAKE_CXX_STANDARD\s+(\d+)`)
+	workspaceCMakeExecutableRegex  = regexp.MustCompile(`(?i)^\s*add_executable\s*\(`)
+	workspaceMainFunctionRegex     = regexp.MustCompile(`(?m)^int\s+main\s*\(`)
 )
 
 type CMakeInfo struct {
@@ -28,7 +28,7 @@ type CMakeInfo struct {
 	StandardVersion string
 }
 
-type DockerfileInfo struct {
+type WorkspaceDockerfileInfo struct {
 	Exists    bool
 	HasFROM   bool
 	HasEXPOSE bool
@@ -47,7 +47,7 @@ type WorkspaceContext struct {
 	Contract *domain.SubmissionContract
 
 	CMake  CMakeInfo
-	Docker DockerfileInfo
+	Docker WorkspaceDockerfileInfo
 	Main   MainInfo
 
 	MissingDirs       []string
@@ -147,7 +147,7 @@ func (ctx *WorkspaceContext) analyzeDockerfile() {
 			continue
 		}
 
-		if dockerfileFromRegex.MatchString(line) {
+		if workspaceDockerfileFromRegex.MatchString(line) {
 			ctx.Docker.HasFROM = true
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {
@@ -155,7 +155,7 @@ func (ctx *WorkspaceContext) analyzeDockerfile() {
 			}
 		}
 
-		if matches := dockerfileExposeRegex.FindStringSubmatch(line); len(matches) >= 2 {
+		if matches := workspaceDockerfileExposeRegex.FindStringSubmatch(line); len(matches) >= 2 {
 			ctx.Docker.HasEXPOSE = true
 			if port, err := strconv.Atoi(matches[1]); err == nil {
 				ctx.Docker.Port = port
@@ -180,14 +180,14 @@ func (ctx *WorkspaceContext) analyzeCMake() {
 			continue
 		}
 
-		if cmakeProjectRegex.MatchString(line) {
+		if workspaceCMakeProjectRegex.MatchString(line) {
 			ctx.CMake.HasProject = true
 		}
-		if matches := cmakeStandardRegex.FindStringSubmatch(line); len(matches) >= 2 {
+		if matches := workspaceCMakeStandardRegex.FindStringSubmatch(line); len(matches) >= 2 {
 			ctx.CMake.HasStandard = true
 			ctx.CMake.StandardVersion = matches[1]
 		}
-		if cmakeExecutableRegex.MatchString(line) {
+		if workspaceCMakeExecutableRegex.MatchString(line) {
 			ctx.CMake.HasExecutable = true
 		}
 	}
@@ -202,7 +202,7 @@ func (ctx *WorkspaceContext) analyzeMain() {
 	ctx.Main.Exists = true
 
 	contentStr := string(content)
-	if mainFunctionRegex.MatchString(contentStr) || strings.Contains(contentStr, "int main(") {
+	if workspaceMainFunctionRegex.MatchString(contentStr) || strings.Contains(contentStr, "int main(") {
 		ctx.Main.HasMain = true
 	}
 

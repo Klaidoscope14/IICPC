@@ -2,27 +2,24 @@ syntax = "proto3";
 
 package orchestrator.v1;
 
-option go_package = "github.com/iicpc/orchestrator/v1";
+option go_package = "github.com/iicpc/pkg/contracts/gen/orchestrator/v1;orchestratorv1";
 
-// Benchmark orchestrator for managing deployment and testing
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
 service BenchmarkOrchestrator {
   rpc DeploySubmission(DeploySubmissionRequest) returns (DeploySubmissionResponse);
   rpc StartBenchmark(StartBenchmarkRequest) returns (StartBenchmarkResponse);
   rpc GetBenchmarkStatus(GetBenchmarkStatusRequest) returns (GetBenchmarkStatusResponse);
   rpc StopBenchmark(StopBenchmarkRequest) returns (StopBenchmarkResponse);
+  rpc GetLeaderboard(GetLeaderboardRequest) returns (GetLeaderboardResponse);
 }
 
 message DeploySubmissionRequest {
   string submission_id = 1;
   string container_image = 2;
   repeated string exposed_ports = 3;
-  ResourceLimits resource_limits = 4;
-}
-
-message ResourceLimits {
-  int32 cpu_milli = 1;      // CPU in millicores
-  int64 memory_mb = 2;      // Memory in MB
-  int64 timeout_seconds = 3;
+  common.v1.ResourceLimits resource_limits = 4;
 }
 
 message DeploySubmissionResponse {
@@ -41,13 +38,14 @@ message BenchmarkConfig {
   int32 bot_count = 1;
   int32 duration_seconds = 2;
   int32 orders_per_second = 3;
-  repeated string protocols = 4;  // rest, websocket, fix
+  repeated string protocols = 4;
+  string preset = 5;
 }
 
 message StartBenchmarkResponse {
   string benchmark_id = 1;
   string status = 2;
-  int64 started_at = 3;
+  google.protobuf.Timestamp started_at = 3;
 }
 
 message GetBenchmarkStatusRequest {
@@ -56,9 +54,15 @@ message GetBenchmarkStatusRequest {
 
 message GetBenchmarkStatusResponse {
   string benchmark_id = 1;
-  string status = 2;  // running, completed, failed
-  int64 elapsed_seconds = 3;
-  TelemetryMetrics metrics = 4;
+  string submission_id = 2;
+  string deployment_id = 3;
+  string status = 4;
+  BenchmarkConfig config = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp completed_at = 7;
+  int64 elapsed_seconds = 8;
+  TelemetryMetrics metrics = 9;
+  string error_message = 10;
 }
 
 message TelemetryMetrics {
@@ -67,6 +71,12 @@ message TelemetryMetrics {
   int32 total_orders_sent = 3;
   int32 total_orders_acknowledged = 4;
   int32 total_errors = 5;
+  double p50_latency_ms = 6;
+  double p90_latency_ms = 7;
+  double p99_latency_ms = 8;
+  int32 active_connections = 9;
+  double cpu_usage_percent = 10;
+  double memory_usage_mb = 11;
 }
 
 message StopBenchmarkRequest {
@@ -76,4 +86,26 @@ message StopBenchmarkRequest {
 message StopBenchmarkResponse {
   bool success = 1;
   string final_status = 2;
+}
+
+message GetLeaderboardRequest {
+  int32 limit = 1;
+}
+
+message GetLeaderboardResponse {
+  repeated LeaderboardEntry leaderboard = 1;
+}
+
+message LeaderboardEntry {
+  int32 rank = 1;
+  string submission_id = 2;
+  string team_name = 3;
+  double tps = 4;
+  double p50_latency_ms = 5;
+  double p90_latency_ms = 6;
+  double p99_latency_ms = 7;
+  double correctness_score = 8;
+  int32 total_orders = 9;
+  int32 failed_orders = 10;
+  double composite_score = 11;
 }

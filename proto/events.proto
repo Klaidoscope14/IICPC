@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "github.com/iicpc/pkg/contracts/gen/events/v1;eventsv1";
+
+import "google/protobuf/timestamp.proto";
+import "orchestrator.proto";
+import "telemetry.proto";
+import "validation.proto";
+
+message EventEnvelope {
+  string id = 1;
+  string type = 2;
+  string version = 3;
+  string source = 4;
+  string key = 5;
+  string correlation_id = 6;
+  google.protobuf.Timestamp occurred_at = 7;
+  bytes payload = 8;
+}
+
+message SubmissionUploadedEvent {
+  string submission_id = 1;
+  string contestant_id = 2;
+  string team_name = 3;
+  string language = 4;
+  int32 version = 5;
+  string storage_path = 6;
+  string checksum = 7;
+  string container_image = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message SubmissionDeletedEvent {
+  string submission_id = 1;
+  google.protobuf.Timestamp deleted_at = 2;
+}
+
+message ValidationCompletedEvent {
+  string submission_id = 1;
+  string status = 2;
+  string language = 3;
+  string runtime = 4;
+  int32 error_count = 5;
+  int32 warning_count = 6;
+  repeated validation.v1.ValidationFinding errors = 7;
+  repeated validation.v1.ValidationFinding warnings = 8;
+  google.protobuf.Timestamp validated_at = 9;
+}
+
+message EngineReadyEvent {
+  string deployment_id = 1;
+  string submission_id = 2;
+  string service_url = 3;
+  string container_id = 4;
+  google.protobuf.Timestamp ready_at = 5;
+}
+
+message BenchmarkStartedEvent {
+  string benchmark_id = 1;
+  string submission_id = 2;
+  string deployment_id = 3;
+  orchestrator.v1.BenchmarkConfig config = 4;
+  google.protobuf.Timestamp started_at = 5;
+}
+
+message BenchmarkFinishedEvent {
+  string benchmark_id = 1;
+  string submission_id = 2;
+  double composite_score = 3;
+  double tps = 4;
+  double p99_latency_ms = 5;
+  double correctness_score = 6;
+  int64 elapsed_seconds = 7;
+  google.protobuf.Timestamp finished_at = 8;
+}
+
+message TelemetrySnapshotEvent {
+  string benchmark_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  telemetry.v1.TelemetryMetrics metrics = 3;
+}

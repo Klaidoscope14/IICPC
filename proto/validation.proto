@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package validation.v1;
+
+option go_package = "github.com/iicpc/pkg/contracts/gen/validation/v1;validationv1";
+
+import "google/protobuf/timestamp.proto";
+
+service ValidationService {
+  rpc TriggerValidation(TriggerValidationRequest) returns (TriggerValidationResponse);
+  rpc GetValidationResult(GetValidationResultRequest) returns (GetValidationResultResponse);
+}
+
+message TriggerValidationRequest {
+  string submission_id = 1;
+}
+
+message TriggerValidationResponse {
+  string submission_id = 1;
+  string status = 2;
+}
+
+message GetValidationResultRequest {
+  string submission_id = 1;
+}
+
+message GetValidationResultResponse {
+  ValidationResult result = 1;
+}
+
+message ValidationResult {
+  string id = 1;
+  string submission_id = 2;
+  string status = 3;
+  string language = 4;
+  string runtime = 5;
+  repeated ValidationFinding errors = 6;
+  repeated ValidationFinding warnings = 7;
+  ValidationReport report = 8;
+  google.protobuf.Timestamp validated_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message ValidationReport {
+  string submission_id = 1;
+  string status = 2;
+  string language = 3;
+  string runtime = 4;
+  int32 exposed_port = 5;
+  map<string, CheckResult> check_results = 6;
+  int32 total_errors = 7;
+  int32 total_warnings = 8;
+  int64 duration_ms = 9;
+}
+
+message CheckResult {
+  string name = 1;
+  bool passed = 2;
+  repeated ValidationFinding errors = 3;
+  repeated ValidationFinding warnings = 4;
+}
+
+message ValidationFinding {
+  string code = 1;
+  string message = 2;
+  string severity = 3;
+  string file_path = 4;
+}
+
+message RuntimeApiContract {
+  EndpointSpec health_endpoint = 1;
+  EndpointSpec order_endpoint = 2;
+  EndpointSpec cancel_endpoint = 3;
+  WebSocketSpec market_data_stream = 4;
+  repeated int32 required_ports = 5;
+  repeated string endpoint_patterns = 6;
+}
+
+message EndpointSpec {
+  string method = 1;
+  string path = 2;
+  string content_type = 3;
+  map<string, string> schema = 4;
+}
+
+message WebSocketSpec {
+  string path = 1;
+  repeated string message_types = 2;
+  bool requires_ping = 3;
+}

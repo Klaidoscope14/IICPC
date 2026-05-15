@@ -2,29 +2,39 @@ syntax = "proto3";
 
 package submission.v1;
 
-option go_package = "github.com/iicpc/submission/v1";
+option go_package = "github.com/iicpc/pkg/contracts/gen/submission/v1;submissionv1";
 
-// Submission service for handling contestant code uploads
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
 service SubmissionService {
   rpc UploadSubmission(UploadSubmissionRequest) returns (UploadSubmissionResponse);
   rpc GetSubmission(GetSubmissionRequest) returns (GetSubmissionResponse);
   rpc ListSubmissions(ListSubmissionsRequest) returns (ListSubmissionsResponse);
   rpc UpdateSubmissionStatus(UpdateSubmissionStatusRequest) returns (UpdateSubmissionStatusResponse);
+  rpc DeleteSubmission(DeleteSubmissionRequest) returns (DeleteSubmissionResponse);
+  rpc ListSubmissionLogs(ListSubmissionLogsRequest) returns (ListSubmissionLogsResponse);
 }
 
 message UploadSubmissionRequest {
   string contestant_id = 1;
   string team_name = 2;
-  string language = 3;  // cpp, rust, go, etc.
+  string language = 3;
   bytes code_archive = 4;
-  string dockerfile = 5;
-  map<string, string> metadata = 6;
+  string original_filename = 5;
+  string dockerfile = 6;
+  string idempotency_key = 7;
+  map<string, string> metadata = 8;
 }
 
 message UploadSubmissionResponse {
   string submission_id = 1;
-  string status = 2;  // pending, processing, deployed, failed
-  int64 created_at = 3;
+  string status = 2;
+  int32 version = 3;
+  string checksum = 4;
+  int64 file_size = 5;
+  string original_filename = 6;
+  google.protobuf.Timestamp created_at = 7;
 }
 
 message GetSubmissionRequest {
@@ -32,15 +42,7 @@ message GetSubmissionRequest {
 }
 
 message GetSubmissionResponse {
-  string submission_id = 1;
-  string contestant_id = 2;
-  string team_name = 3;
-  string language = 4;
-  string status = 5;
-  map<string, string> metadata = 6;
-  int64 created_at = 7;
-  int64 updated_at = 8;
-  BenchmarkResult benchmark_result = 9;
+  Submission submission = 1;
 }
 
 message BenchmarkResult {
@@ -56,22 +58,29 @@ message BenchmarkResult {
 message ListSubmissionsRequest {
   string contestant_id = 1;
   string status = 2;
-  int32 page_size = 3;
-  int32 page_token = 4;
+  common.v1.PageRequest page = 3;
 }
 
 message ListSubmissionsResponse {
   repeated Submission submissions = 1;
-  string next_page_token = 2;
+  common.v1.PageResponse page = 2;
 }
 
 message Submission {
-  string submission_id = 1;
+  string id = 1;
   string contestant_id = 2;
   string team_name = 3;
-  string status = 4;
-  int64 created_at = 5;
-  BenchmarkResult benchmark_result = 6;
+  string language = 4;
+  string status = 5;
+  int32 version = 6;
+  string checksum = 7;
+  string original_filename = 8;
+  int64 file_size = 9;
+  string storage_path = 10;
+  map<string, string> metadata = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  BenchmarkResult benchmark_result = 14;
 }
 
 message UpdateSubmissionStatusRequest {
@@ -82,4 +91,31 @@ message UpdateSubmissionStatusRequest {
 
 message UpdateSubmissionStatusResponse {
   bool success = 1;
+}
+
+message DeleteSubmissionRequest {
+  string submission_id = 1;
+}
+
+message DeleteSubmissionResponse {
+  bool success = 1;
+}
+
+message ListSubmissionLogsRequest {
+  string submission_id = 1;
+  common.v1.PageRequest page = 2;
+}
+
+message ListSubmissionLogsResponse {
+  repeated SubmissionLog logs = 1;
+  common.v1.PageResponse page = 2;
+}
+
+message SubmissionLog {
+  string id = 1;
+  string submission_id = 2;
+  string log_type = 3;
+  string level = 4;
+  string message = 5;
+  google.protobuf.Timestamp created_at = 6;
 }
