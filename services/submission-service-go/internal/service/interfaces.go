@@ -15,4 +15,9 @@ type SubmissionRepository interface {
 	List(ctx context.Context, contestantID string, status string, limit, offset int) ([]*domain.Submission, error)
 	UpdateStatus(ctx context.Context, id string, status domain.SubmissionStatus) error
 	UpdateBenchmarkResult(ctx context.Context, result *domain.BenchmarkResult) error
+	SoftDelete(ctx context.Context, id string) error
+	GetLatestVersion(ctx context.Context, contestantID string) (int, error)
+	GetByIdempotencyKey(ctx context.Context, key string) (*domain.Submission, error)
+	CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error
 }
+

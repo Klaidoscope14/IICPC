@@ -4,11 +4,12 @@ import "time"
 
 // Topic names for the event bus.
 const (
-	TopicSubmissionCreated  = "submission.created"
-	TopicDeploymentReady    = "deployment.ready"
-	TopicBenchmarkStarted   = "benchmark.started"
-	TopicBenchmarkCompleted = "benchmark.completed"
-	TopicTelemetrySnapshot  = "telemetry.snapshot"
+	TopicSubmissionCreated   = "submission.created"
+	TopicValidationCompleted = "validation.completed"
+	TopicDeploymentReady     = "deployment.ready"
+	TopicBenchmarkStarted    = "benchmark.started"
+	TopicBenchmarkCompleted  = "benchmark.completed"
+	TopicTelemetrySnapshot   = "telemetry.snapshot"
 )
 
 // SubmissionCreatedEvent is published when a new submission is accepted.
@@ -18,6 +19,17 @@ type SubmissionCreatedEvent struct {
 	Language       string    `json:"language"`
 	ContainerImage string    `json:"container_image,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ValidationCompletedEvent is published when a submission has been validated.
+type ValidationCompletedEvent struct {
+	SubmissionID string    `json:"submission_id"`
+	Status       string    `json:"status"` // "passed" or "failed"
+	Language     string    `json:"language"`
+	Runtime      string    `json:"runtime"`
+	ErrorCount   int       `json:"error_count"`
+	WarningCount int       `json:"warning_count"`
+	ValidatedAt  time.Time `json:"validated_at"`
 }
 
 // DeploymentReadyEvent is published when a submission's container is deployed.

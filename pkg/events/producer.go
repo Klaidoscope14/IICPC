@@ -38,6 +38,11 @@ func (p *Producer) PublishSubmissionCreated(ctx context.Context, event Submissio
 	return p.publish(ctx, TopicSubmissionCreated, event.SubmissionID, event)
 }
 
+// PublishValidationCompleted publishes a validation_completed event.
+func (p *Producer) PublishValidationCompleted(ctx context.Context, event ValidationCompletedEvent) error {
+	return p.publish(ctx, TopicValidationCompleted, event.SubmissionID, event)
+}
+
 // PublishBenchmarkCompleted publishes a benchmark_completed event.
 func (p *Producer) PublishBenchmarkCompleted(ctx context.Context, event BenchmarkCompletedEvent) error {
 	return p.publish(ctx, TopicBenchmarkCompleted, event.BenchmarkID, event)

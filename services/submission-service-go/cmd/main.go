@@ -13,9 +13,11 @@ import (
 	"github.com/iicpc/pkg/server"
 	"github.com/iicpc/submission-service-go/config"
 	"github.com/iicpc/submission-service-go/internal/handler"
+	"github.com/iicpc/submission-service-go/internal/publisher"
 	"github.com/iicpc/submission-service-go/internal/repository"
 	"github.com/iicpc/submission-service-go/internal/service"
 	"github.com/iicpc/submission-service-go/internal/storage"
+	"github.com/iicpc/submission-service-go/internal/validation"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -34,27 +36,46 @@ func main() {
 	}
 	defer db.Close()
 
+	// Tune connection pool for concurrency.
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 
-	// Wire up events and storage
-	producer, err := events.NewProducer([]string{"localhost:19092"}, logger)
+	// Wire up Redpanda producer (durable event pipeline).
+	producer, err := events.NewProducer(cfg.Redpanda.Brokers, logger)
 	if err != nil {
 		logger.Warn("failed to connect to redpanda, running without event producer", "error", err)
 	} else {
 		defer producer.Close()
 	}
 
-	localStorage, err := storage.NewLocalStorage("/tmp/iicpc-storage")
+	// Wire up Redis publisher (real-time notifications).
+	var redisPublisher *publisher.RedisPublisher
+	redisPub, err := publisher.NewRedisPublisher(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger)
+	if err != nil {
+		logger.Warn("failed to connect to redis, running without redis publisher", "error", err)
+	} else {
+		redisPublisher = redisPub
+		defer redisPublisher.Close()
+	}
+
+	// Initialize storage.
+	localStorage, err := storage.NewLocalStorage(cfg.Storage.BasePath)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 
+	// Initialize upload validator.
+	validator := validation.NewUploadValidator(cfg.Storage.MaxUploadBytes, nil)
+
 	// Wire up dependencies.
 	submissionRepo := repository.NewPostgresSubmissionRepository(db)
-	submissionService := service.NewSubmissionService(submissionRepo, producer, localStorage)
-	submissionHandler := handler.NewSubmissionHandler(submissionService)
+	submissionService := service.NewSubmissionService(submissionRepo, producer, redisPublisher, localStorage, validator, logger)
+	submissionHandler := handler.NewSubmissionHandler(submissionService, cfg.Storage.MaxUploadBytes)
 
 	// Set up router with middleware.
 	router := gin.Default()
@@ -84,3 +105,4 @@ func main() {
 	// Block until shutdown signal.
 	server.RunGracefully(srv, "submission-service")
 }
+

@@ -11,12 +11,13 @@ const (
 	StatusDeployed     SubmissionStatus = "deployed"
 	StatusFailed       SubmissionStatus = "failed"
 	StatusBenchmarking SubmissionStatus = "benchmarking"
+	StatusDeleted      SubmissionStatus = "deleted"
 )
 
 // IsValid returns true if the status is a recognized submission status.
 func (s SubmissionStatus) IsValid() bool {
 	switch s {
-	case StatusPending, StatusProcessing, StatusDeployed, StatusFailed, StatusBenchmarking:
+	case StatusPending, StatusProcessing, StatusDeployed, StatusFailed, StatusBenchmarking, StatusDeleted:
 		return true
 	}
 	return false
@@ -24,16 +25,22 @@ func (s SubmissionStatus) IsValid() bool {
 
 // Submission represents a contestant's code upload and its current state.
 type Submission struct {
-	ID           string            `json:"id" db:"id"`
-	ContestantID string            `json:"contestant_id" db:"contestant_id"`
-	TeamName     string            `json:"team_name" db:"team_name"`
-	Language     string            `json:"language" db:"language"`
-	Status       SubmissionStatus  `json:"status" db:"status"`
-	CodeArchive  []byte            `json:"-" db:"code_archive"`
-	Dockerfile   string            `json:"dockerfile" db:"dockerfile"`
-	Metadata     map[string]string `json:"metadata" db:"metadata"`
-	CreatedAt    time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at" db:"updated_at"`
+	ID               string            `json:"id" db:"id"`
+	ContestantID     string            `json:"contestant_id" db:"contestant_id"`
+	TeamName         string            `json:"team_name" db:"team_name"`
+	Language         string            `json:"language" db:"language"`
+	Status           SubmissionStatus  `json:"status" db:"status"`
+	Version          int               `json:"version" db:"version"`
+	CodeArchive      []byte            `json:"-" db:"code_archive"`
+	Dockerfile       string            `json:"dockerfile" db:"dockerfile"`
+	Checksum         string            `json:"checksum" db:"checksum"`
+	OriginalFilename string            `json:"original_filename" db:"original_filename"`
+	FileSize         int64             `json:"file_size" db:"file_size"`
+	StoragePath      string            `json:"storage_path" db:"storage_path"`
+	IdempotencyKey   string            `json:"idempotency_key,omitempty" db:"idempotency_key"`
+	Metadata         map[string]string `json:"metadata" db:"metadata"`
+	CreatedAt        time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at" db:"updated_at"`
 }
 
 // BenchmarkResult holds the performance metrics from a completed benchmark run.
@@ -50,13 +57,26 @@ type BenchmarkResult struct {
 	CreatedAt        time.Time `json:"created_at" db:"created_at"`
 }
 
+// SubmissionLog represents a log entry (build, runtime, validation) attached to a submission.
+type SubmissionLog struct {
+	ID           string    `json:"id" db:"id"`
+	SubmissionID string    `json:"submission_id" db:"submission_id"`
+	LogType      string    `json:"log_type" db:"log_type"` // "upload", "build", "runtime", "validation"
+	Message      string    `json:"message" db:"message"`
+	Level        string    `json:"level" db:"level"` // "info", "warn", "error"
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+}
+
 // CreateSubmissionParams is a pure value object for creating new submissions.
 // This is the service-layer input — not for JSON serialization (handlers have their own DTOs).
 type CreateSubmissionParams struct {
-	ContestantID string
-	TeamName     string
-	Language     string
-	CodeArchive  []byte
-	Dockerfile   string
-	Metadata     map[string]string
+	ContestantID     string
+	TeamName         string
+	Language         string
+	CodeArchive      []byte
+	Dockerfile       string
+	OriginalFilename string
+	FileSize         int64
+	IdempotencyKey   string
+	Metadata         map[string]string
 }

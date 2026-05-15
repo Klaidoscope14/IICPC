@@ -14,6 +14,10 @@ type Storage interface {
 	Save(ctx context.Context, key string, reader io.Reader) (string, error)
 	// Get retrieves a file.
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	// Delete removes a file from storage.
+	Delete(ctx context.Context, key string) error
+	// Exists checks whether a file exists in storage.
+	Exists(ctx context.Context, key string) (bool, error)
 }
 
 // LocalStorage implements Storage using the local filesystem.
@@ -54,3 +58,24 @@ func (s *LocalStorage) Get(ctx context.Context, key string) (io.ReadCloser, erro
 	path := filepath.Join(s.baseDir, key)
 	return os.Open(path)
 }
+
+func (s *LocalStorage) Delete(ctx context.Context, key string) error {
+	path := filepath.Join(s.baseDir, key)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete file: %w", err)
+	}
+	return nil
+}
+
+func (s *LocalStorage) Exists(ctx context.Context, key string) (bool, error) {
+	path := filepath.Join(s.baseDir, key)
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to check file existence: %w", err)
+}
+

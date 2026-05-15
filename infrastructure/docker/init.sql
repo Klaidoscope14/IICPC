@@ -9,9 +9,40 @@ CREATE TABLE IF NOT EXISTS submissions (
     team_name VARCHAR(255) NOT NULL,
     language VARCHAR(50) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    version INTEGER NOT NULL DEFAULT 1,
     code_archive BYTEA NOT NULL,
     dockerfile TEXT,
+    checksum VARCHAR(64),
+    original_filename VARCHAR(255),
+    file_size BIGINT,
+    storage_path TEXT,
+    idempotency_key VARCHAR(255),
     metadata JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Create submission_logs table
+CREATE TABLE IF NOT EXISTS submission_logs (
+    id VARCHAR(255) PRIMARY KEY,
+    submission_id VARCHAR(255) NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+    log_type VARCHAR(50) NOT NULL, -- 'upload', 'build', 'runtime', 'validation'
+    message TEXT NOT NULL,
+    level VARCHAR(20) NOT NULL DEFAULT 'info', -- 'info', 'warn', 'error'
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Create validation_results table
+CREATE TABLE IF NOT EXISTS validation_results (
+    id VARCHAR(255) PRIMARY KEY,
+    submission_id VARCHAR(255) NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending', -- pending, running, passed, failed
+    language VARCHAR(50),
+    runtime VARCHAR(100),
+    errors JSONB DEFAULT '[]',
+    warnings JSONB DEFAULT '[]',
+    report JSONB,
+    validated_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -86,6 +117,12 @@ CREATE TABLE IF NOT EXISTS telemetry_snapshots (
 CREATE INDEX IF NOT EXISTS idx_submissions_contestant_id ON submissions(contestant_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 CREATE INDEX IF NOT EXISTS idx_submissions_created_at ON submissions(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_idempotency_key ON submissions(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_submissions_contestant_version ON submissions(contestant_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_submission_logs_submission_id ON submission_logs(submission_id);
+CREATE INDEX IF NOT EXISTS idx_submission_logs_created_at ON submission_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_results_submission_id ON validation_results(submission_id);
+CREATE INDEX IF NOT EXISTS idx_validation_results_status ON validation_results(status);
 CREATE INDEX IF NOT EXISTS idx_benchmark_results_submission_id ON benchmark_results(submission_id);
 CREATE INDEX IF NOT EXISTS idx_benchmark_results_score ON benchmark_results(composite_score DESC);
 CREATE INDEX IF NOT EXISTS idx_deployments_submission_id ON deployments(submission_id);
@@ -114,3 +151,4 @@ CREATE TRIGGER update_submissions_updated_at BEFORE UPDATE ON submissions
 
 CREATE TRIGGER update_deployments_updated_at BEFORE UPDATE ON deployments
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+

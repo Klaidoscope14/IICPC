@@ -1,0 +1,308 @@
+# Submission Service-
+1. Upload API endpoint
+2. Upload size limits
+3. Zip validation
+4. Allowed MIME type validation
+5. Filename sanitization
+6. Store uploaded zip in storage
+7. Upload metadata persistence in postgres
+8. Submission status endpoint
+9. Submission fetch endpoint
+10. Submission listing endpoint
+11. Submission deletion endpoint
+12. Submission versioning
+13. Upload checksum generation
+14. Redis event publisher
+15. Submission logs metadata
+16. Upload retry support
+17. Health endpoint
+
+------------------------------------------------
+
+# Validation Service-
+1. Extract uploaded zip
+2. Folder structure validation
+3. Allowed extensions validation
+4. Dockerfile existence validation
+5. Required config validation
+6. Submission schema validation
+7. Required endpoint validation
+8. Required port validation
+9. Language/runtime detection
+10. Validation result model
+11. Validation status persistence
+12. Validation API endpoint
+13. Validation report generation
+14. Publish validation event
+15. Health endpoint
+
+------------------------------------------------
+
+# API Gateway-
+1. REST routing
+2. Authentication middleware (optional MVP)
+3. Request validation
+4. Rate limiting
+5. Reverse proxy for services
+6. Health check endpoint
+7. Error normalization
+8. Logging middleware
+9. WebSocket proxying
+10. API versioning
+
+------------------------------------------------
+
+# Submission Contract Engine-
+1. Define required folder structure
+2. Define required API schema
+3. Define required WebSocket schema
+4. Define required health endpoint
+5. Define required port exposure rules
+6. Define Docker requirements
+7. Generate validation errors
+8. Generate submission compatibility report
+
+------------------------------------------------
+
+# Benchmark Orchestrator-
+1. Consume validation event
+2. Fetch validated zip
+3. Prepare docker build context
+4. Execute docker build
+5. Capture build logs
+6. Build timeout manager
+7. Docker run executor
+8. Apply CPU constraints
+9. Apply memory constraints
+10. Apply network isolation
+11. Apply filesystem isolation
+12. Health probe before benchmark
+13. Readiness check
+14. Failed container cleanup
+15. Idle container cleanup
+16. Container lifecycle tracking
+17. Restart strategy
+18. Publish engine ready event
+19. Benchmark trigger event
+20. Health endpoint
+
+------------------------------------------------
+
+# Bot Fleet Service (C++)-
+1. WebSocket bot client
+2. REST bot client
+3. FIX protocol support (optional)
+4. Concurrent bot spawning
+5. Worker pool system
+6. Configurable concurrency
+7. Configurable benchmark duration
+8. Limit order generator
+9. Market order generator
+10. Cancel order generator
+11. Randomized order simulation
+12. Burst traffic simulation
+13. Trading pattern simulation
+14. Benchmark preset support
+15. Order request tracking
+16. Response tracking
+17. Failure tracking
+18. Timeout detection
+19. Distributed bot workers
+20. Publish telemetry events
+21. Health endpoint
+
+------------------------------------------------
+
+# Benchmark Presets-
+1. Low volatility simulation
+2. Medium market traffic
+3. High-frequency burst
+4. Market open chaos
+5. Flash crash simulation
+6. Stress overload benchmark
+7. Custom benchmark config
+
+------------------------------------------------
+
+# Telemetry Service-
+1. Receive benchmark events
+2. Order acknowledgment latency tracking
+3. p50 latency calculation
+4. p90 latency calculation
+5. p99 latency calculation
+6. Throughput calculation (TPS)
+7. Error rate calculation
+8. Failure rate calculation
+9. Success rate calculation
+10. Timeout rate calculation
+11. Metrics aggregation
+12. Time-series persistence
+13. Real-time stream publisher
+14. Historical benchmark metrics
+15. Health endpoint
+
+------------------------------------------------
+
+# Validation/Correctness Engine (C++)-
+1. Orderbook reconstruction
+2. Match replay engine
+3. Price priority validation
+4. Time priority validation
+5. Fill correctness validation
+6. Sequence consistency checks
+7. Duplicate order detection
+8. Invalid fill detection
+9. Correctness scoring
+10. Replay logs
+11. Deterministic validation
+12. Health endpoint
+
+------------------------------------------------
+
+# Scoring Engine-
+1. Composite score calculation
+2. Throughput score
+3. Latency score
+4. Correctness score
+5. Stability score
+6. Weighted scoring formula
+7. Dynamic score updates
+8. Benchmark ranking
+9. Rank history tracking
+
+------------------------------------------------
+
+# Leaderboard Service-
+1. Live leaderboard endpoint
+2. Ranking computation
+3. Dynamic score updates
+4. WebSocket streaming
+5. Benchmark comparison
+6. Historical leaderboard
+7. Team performance summary
+8. Health endpoint
+
+------------------------------------------------
+
+# Logging System-
+1. Build logs capture
+2. Container runtime logs
+3. Benchmark execution logs
+4. Validation logs
+5. Error logs
+6. Structured logging
+7. Log streaming to frontend
+8. Log persistence
+
+------------------------------------------------
+
+# WebSocket Service-
+1. Live benchmark updates
+2. Live leaderboard updates
+3. Container status updates
+4. Telemetry stream
+5. Retry connection handling
+6. Connection heartbeat
+7. Reconnection support
+
+------------------------------------------------
+
+# Database (Postgres + TimescaleDB)-
+1. Submission table
+2. Validation results table
+3. Benchmark runs table
+4. Metrics table
+5. Leaderboard table
+6. Benchmark history table
+7. Logs metadata table
+8. Team metadata table
+
+------------------------------------------------
+
+# Redis / Event Bus-
+1. Submission uploaded event
+2. Validation complete event
+3. Engine ready event
+4. Benchmark started event
+5. Benchmark finished event
+6. Telemetry events
+7. Leaderboard update event
+
+------------------------------------------------
+
+# Docker / Sandbox-
+1. Secure container execution
+2. CPU pinning
+3. Memory limits
+4. Read-only filesystem
+5. Network isolation
+6. Timeout enforcement
+7. Auto cleanup
+8. Sandboxed execution
+9. Docker image management
+
+------------------------------------------------
+
+# Kubernetes (Phase 2 / Bonus)-
+1. Pod deployment
+2. Worker autoscaling
+3. Bot fleet scaling
+4. Resource quotas
+5. Service discovery
+6. Deployment configs
+7. HPA autoscaling
+8. Rolling updates
+
+------------------------------------------------
+
+# Observability-
+1. Prometheus metrics
+2. Grafana dashboards
+3. Service health monitoring
+4. Benchmark monitoring
+5. Alerting (optional)
+6. Distributed tracing (optional)
+
+------------------------------------------------
+
+# Security-
+1. Upload validation
+2. File sanitization
+3. Restricted execution
+4. Resource abuse prevention
+5. Timeout enforcement
+6. Dangerous file blocking
+7. Sandboxed runtime
+
+------------------------------------------------
+
+# DevOps / Infra-
+1. Docker Compose setup
+2. Environment configs
+3. Secrets management
+4. CI pipeline
+5. Service startup scripts
+6. Health checks
+7. Shared config system
+
+------------------------------------------------
+
+# Shared Contracts / Proto-
+1. gRPC proto definitions
+2. DTO contracts
+3. Event schemas
+4. Shared response models
+5. Internal API contracts
+
+------------------------------------------------
+
+# Testing-
+1. Upload flow tests
+2. Validation tests
+3. Docker orchestration tests
+4. Bot engine tests
+5. Telemetry tests
+6. Correctness tests
+7. API integration tests
+8. WebSocket tests
+9. End-to-end benchmark test
