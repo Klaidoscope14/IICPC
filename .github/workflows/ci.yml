@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: go modules
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/api-gateway-go
+          - services/submission-service-go
+          - services/benchmark-orchestrator-go
+          - services/validation-service-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            pkg/go.sum
+            services/*/go.sum
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+  proto:
+    name: proto descriptors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Build descriptor set
+        run: |
+          protoc -I proto \
+            --descriptor_set_out=/tmp/iicpc-contracts.pb \
+            proto/common.proto \
+            proto/submission.proto \
+            proto/orchestrator.proto \
+            proto/telemetry.proto \
+            proto/validation.proto \
+            proto/events.proto
+
+  frontend:
+    name: frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/dashboard-nextjs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/dashboard-nextjs/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker compose
+        working-directory: infrastructure/docker
+        run: docker compose --env-file .env.example config --quiet

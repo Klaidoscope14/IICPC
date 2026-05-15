@@ -1,19 +1,19 @@
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
   - job_name: 'submission-service'
     static_configs:
-      - targets: ['host.docker.internal:8080']
+      - targets: ['submission-service:8080']
     metrics_path: /metrics
 
   - job_name: 'benchmark-orchestrator'
     static_configs:
-      - targets: ['host.docker.internal:8081']
+      - targets: ['benchmark-orchestrator:8081']
     metrics_path: /metrics
 
   - job_name: 'api-gateway'
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ['api-gateway:8082']
     metrics_path: /metrics

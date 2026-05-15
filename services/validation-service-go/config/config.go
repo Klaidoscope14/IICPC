@@ -21,9 +21,9 @@ type Config struct {
 
 func LoadConfig() *Config {
 	cfg := &Config{
-		Port:              getEnv("PORT", "8081"), // Submission runs on 8080 usually
-		DatabaseURL:       getEnv("DATABASE_URL", "postgres://iicpc:iicpc_secret@localhost:5432/iicpc?sslmode=disable"),
-		RedpandaBrokers:   strings.Split(getEnv("REDPANDA_BROKERS", "localhost:9092"), ","),
+		Port:              getEnv("PORT", "8084"),
+		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/iicpc?sslmode=disable"),
+		RedpandaBrokers:   strings.Split(getEnv("REDPANDA_BROKERS", "localhost:19092"), ","),
 		ConsumerGroupID:   getEnv("CONSUMER_GROUP_ID", "validation-service-group"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:     getEnv("REDIS_PASSWORD", ""),

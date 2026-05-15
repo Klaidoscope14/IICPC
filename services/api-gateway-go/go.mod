@@ -2,7 +2,10 @@ module github.com/iicpc/api-gateway-go
 
 go 1.25.0
 
-require github.com/gin-gonic/gin v1.9.1
+require (
+	github.com/gin-gonic/gin v1.9.1
+	github.com/iicpc/pkg v0.0.0
+)
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect
@@ -35,3 +38,5 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/iicpc/pkg => ../../pkg

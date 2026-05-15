@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds all configuration for the benchmark orchestrator service.
 type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
+	Redpanda RedpandaConfig
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -26,6 +28,10 @@ type DatabaseConfig struct {
 	SSLMode  string
 }
 
+type RedpandaConfig struct {
+	Brokers []string
+}
+
 // Load reads configuration from environment variables with sensible defaults.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -39,6 +45,9 @@ func Load() (*Config, error) {
 			Password: getEnv("DB_PASSWORD", "postgres"),
 			DBName:   getEnv("DB_NAME", "iicpc"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+		},
+		Redpanda: RedpandaConfig{
+			Brokers: strings.Split(getEnv("REDPANDA_BROKERS", "localhost:19092"), ","),
 		},
 	}
 

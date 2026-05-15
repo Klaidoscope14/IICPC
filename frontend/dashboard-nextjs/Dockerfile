@@ -2,6 +2,11 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
+ARG NEXT_PUBLIC_API_URL=http://localhost:8082
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:8081
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+
 COPY package.json package-lock.json* ./
 RUN npm ci
 
@@ -13,6 +18,7 @@ FROM node:18-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
+ENV PORT 3000
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

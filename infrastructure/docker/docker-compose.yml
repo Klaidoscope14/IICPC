@@ -1,60 +1,96 @@
+name: iicpc
+
 services:
   postgres:
     image: postgres:15-alpine
     container_name: iicpc-postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: iicpc
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-iicpc}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - synchronous_commit=off
 
   redis:
     image: redis:7-alpine
     container_name: iicpc-redis
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --tcp-keepalive
+      - "30"
+      - --hz
+      - "50"
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redpanda:
-    image: redpandadata/redpanda:latest
+    image: redpandadata/redpanda:v24.2.7
     container_name: iicpc-redpanda
     command:
-      - redpanda start
-      - --smp 1
-      - --memory 512M
+      - redpanda
+      - start
+      - --smp
+      - "1"
+      - --memory
+      - 768M
+      - --reserve-memory
+      - 0M
       - --overprovisioned
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr
+      - internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr
+      - internal://redpanda:8082,external://localhost:18082
     ports:
-      - "19092:19092"   # Kafka API (external)
-      - "18082:18082"   # HTTP Proxy (external)
+      - "${REDPANDA_KAFKA_PORT:-19092}:19092"
+      - "${REDPANDA_PROXY_PORT:-18082}:18082"
     volumes:
       - redpanda-data:/var/lib/redpanda/data
     healthcheck:
       test: ["CMD", "rpk", "cluster", "health"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   redpanda-console:
-    image: redpandadata/console:latest
+    image: redpandadata/console:v2.7.2
     container_name: iicpc-redpanda-console
     depends_on:
       redpanda:
@@ -62,31 +98,193 @@ services:
     environment:
       KAFKA_BROKERS: redpanda:9092
     ports:
-      - "8083:8080"
+      - "${REDPANDA_CONSOLE_PORT:-8083}:8080"
+
+  submission-service:
+    build:
+      context: ../..
+      dockerfile: services/submission-service-go/Dockerfile
+    image: iicpc/submission-service:local
+    container_name: iicpc-submission-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_NAME: ${POSTGRES_DB:-iicpc}
+      DB_SSLMODE: disable
+      REDIS_ADDR: redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      STORAGE_BASE_PATH: /data/iicpc-storage
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${SUBMISSION_SERVICE_PORT:-8080}:8080"
+    volumes:
+      - submission-storage:/data/iicpc-storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  validation-service:
+    build:
+      context: ../..
+      dockerfile: services/validation-service-go/Dockerfile
+    image: iicpc/validation-service:local
+    container_name: iicpc-validation-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      submission-service:
+        condition: service_healthy
+    environment:
+      PORT: "8084"
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-iicpc}?sslmode=disable
+      REDPANDA_BROKERS: redpanda:9092
+      CONSUMER_GROUP_ID: validation-service-group
+      MAX_EXTRACTED_BYTES: ${MAX_EXTRACTED_BYTES:-524288000}
+      MAX_FILE_COUNT: ${MAX_FILE_COUNT:-1000}
+    ports:
+      - "${VALIDATION_SERVICE_PORT:-8084}:8084"
+    volumes:
+      - submission-storage:/data/iicpc-storage:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  benchmark-orchestrator:
+    build:
+      context: ../..
+      dockerfile: services/benchmark-orchestrator-go/Dockerfile
+    image: iicpc/benchmark-orchestrator:local
+    container_name: iicpc-benchmark-orchestrator
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      validation-service:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "8081"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_NAME: ${POSTGRES_DB:-iicpc}
+      DB_SSLMODE: disable
+      REDPANDA_BROKERS: redpanda:9092
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${ORCHESTRATOR_PORT:-8081}:8081"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: services/api-gateway-go/Dockerfile
+    image: iicpc/api-gateway:local
+    container_name: iicpc-api-gateway
+    depends_on:
+      submission-service:
+        condition: service_healthy
+      benchmark-orchestrator:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "8082"
+      SUBMISSION_SERVICE_URL: http://submission-service:8080
+      ORCHESTRATOR_URL: http://benchmark-orchestrator:8081
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${API_GATEWAY_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  dashboard:
+    build:
+      context: ../../frontend/dashboard-nextjs
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${API_GATEWAY_PORT:-8082}
+        NEXT_PUBLIC_WS_URL: ws://localhost:${ORCHESTRATOR_PORT:-8081}
+    image: iicpc/dashboard:local
+    container_name: iicpc-dashboard
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:${API_GATEWAY_PORT:-8082}
+      NEXT_PUBLIC_WS_URL: ws://localhost:${ORCHESTRATOR_PORT:-8081}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     container_name: iicpc-prometheus
+    depends_on:
+      submission-service:
+        condition: service_healthy
+      benchmark-orchestrator:
+        condition: service_healthy
+      api-gateway:
+        condition: service_healthy
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.retention.time=7d'
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.wal-compression
+      - --web.enable-lifecycle
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.4.0
     container_name: iicpc-grafana
     depends_on:
       - prometheus
     ports:
-      - "3001:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_USERS_DEFAULT_THEME: dark
     volumes:
       - grafana-data:/var/lib/grafana
 
@@ -96,3 +294,4 @@ volumes:
   redpanda-data:
   prometheus-data:
   grafana-data:
+  submission-storage:

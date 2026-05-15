@@ -54,7 +54,7 @@ func main() {
 	orchestratorHandler := handler.NewOrchestratorHandler(orchestratorService)
 
 	// Initialize Redpanda Consumer
-	consumer, err := events.NewConsumer([]string{"localhost:19092"}, "orchestrator-group", []string{events.TopicSubmissionCreated}, logger)
+	consumer, err := events.NewConsumer(cfg.Redpanda.Brokers, "orchestrator-group", []string{events.TopicSubmissionCreated}, logger)
 	if err != nil {
 		logger.Warn("Failed to initialize event consumer", "error", err)
 	} else {
@@ -64,16 +64,16 @@ func main() {
 			if err != nil {
 				return err
 			}
-			
+
 			logger.Info("Received submission created event, triggering deployment", "submission_id", event.SubmissionID)
-			
+
 			// Trigger deployment
 			ports := []string{"8080"}
 			limits := domain.ResourceLimits{CPUMilli: 500, MemoryMB: 512}
 			_, err = orchestratorService.DeploySubmission(ctx, event.SubmissionID, event.ContainerImage, ports, limits)
 			return err
 		})
-		
+
 		// Start consumer in background
 		go func() {
 			if err := consumer.Start(context.Background()); err != nil {
