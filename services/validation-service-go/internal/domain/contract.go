@@ -58,17 +58,68 @@ var DefaultContract = SubmissionContract{
 		"node_modules/",
 		".DS_Store",
 	},
-	DockerfileRequirements: DockerfileRequirements{
-		RequireFROM:   true,
-		RequireEXPOSE: true,
-	},
-	CMakeRequirements: CMakeRequirements{
-		RequireProject:       true,
-		RequireCXXStandard:   true,
-		RequireAddExecutable: true,
-	},
-	MaxExtractedBytes: 500 * 1024 * 1024, // 500 MB
-	MaxFileCount:      1000,
+		DockerfileRequirements: DockerfileRequirements{
+			RequireFROM:        true,
+			RequireEXPOSE:      true,
+			WarnIfNoUSER:       true,
+			WarnIfNoHEALTHCHECK: true,
+		},
+		CMakeRequirements: CMakeRequirements{
+			RequireProject:       true,
+			RequireCXXStandard:   true,
+			RequireAddExecutable: true,
+		},
+		RuntimeAPI: RuntimeAPIContract{
+			HealthEndpoint: EndpointSpec{
+				Required: true,
+				Method:   "GET",
+				Path:     "/health",
+			},
+			OrderEndpoint: EndpointSpec{
+				Required:    true,
+				Method:      "POST",
+				Path:        "/api/v1/orders",
+				ContentType: "application/json",
+				Schema: map[string]string{
+					"id":       "string|integer",
+					"symbol":   "string",
+					"side":     "buy|sell",
+					"price":    "number",
+					"quantity": "integer",
+					"type":     "limit|market",
+				},
+			},
+			CancelEndpoint: EndpointSpec{
+				Required:    true,
+				Method:      "DELETE",
+				Path:        "/api/v1/orders/{id}",
+				ContentType: "application/json",
+			},
+			MarketDataStream: WebSocketSpec{
+				Required:     true,
+				Path:         "/ws/market-data",
+				MessageTypes: []string{"book_snapshot", "trade", "heartbeat"},
+				RequiresPing: true,
+			},
+			RequiredPorts: []int{8080},
+			EndpointPatterns: []string{
+				"bind",
+				"listen",
+				"accept",
+				"httplib",
+				"boost::asio",
+				"crow::",
+				"pistache",
+				"restbed",
+				"cpprestsdk",
+				"grpc::",
+				"uWebSockets",
+				"websocket",
+				"upgrade",
+			},
+		},
+		MaxExtractedBytes: 500 * 1024 * 1024, // 500 MB
+		MaxFileCount:      1000,
 	// Common server-socket patterns in C++ that indicate the submission
 	// can accept network connections (required for bot fleet benchmarking).
 	EndpointPatterns: []string{
@@ -95,6 +146,7 @@ type SubmissionContract struct {
 	ForbiddenPatterns     []string
 	DockerfileRequirements DockerfileRequirements
 	CMakeRequirements     CMakeRequirements
+	RuntimeAPI            RuntimeAPIContract
 	MaxExtractedBytes     int64
 	MaxFileCount          int
 	EndpointPatterns      []string
@@ -102,8 +154,10 @@ type SubmissionContract struct {
 
 // DockerfileRequirements defines what must be present in the Dockerfile.
 type DockerfileRequirements struct {
-	RequireFROM   bool
-	RequireEXPOSE bool
+	RequireFROM         bool
+	RequireEXPOSE       bool
+	WarnIfNoUSER        bool
+	WarnIfNoHEALTHCHECK bool
 }
 
 // CMakeRequirements defines what must be present in CMakeLists.txt.
@@ -111,4 +165,29 @@ type CMakeRequirements struct {
 	RequireProject       bool
 	RequireCXXStandard   bool
 	RequireAddExecutable bool
+}
+
+// RuntimeAPIContract defines the external surface the bot fleet will call.
+type RuntimeAPIContract struct {
+	HealthEndpoint   EndpointSpec
+	OrderEndpoint    EndpointSpec
+	CancelEndpoint   EndpointSpec
+	MarketDataStream WebSocketSpec
+	RequiredPorts    []int
+	EndpointPatterns []string
+}
+
+type EndpointSpec struct {
+	Required    bool
+	Method      string
+	Path        string
+	ContentType string
+	Schema      map[string]string
+}
+
+type WebSocketSpec struct {
+	Required     bool
+	Path         string
+	MessageTypes []string
+	RequiresPing bool
 }

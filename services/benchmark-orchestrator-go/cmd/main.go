@@ -50,27 +50,37 @@ func main() {
 	// Wire up dependencies.
 	repo := repository.NewPostgresRepository(db)
 	scoring := service.NewScoringService(domain.DefaultScoringWeights())
-	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, logger)
+
+	producer, err := events.NewProducer(cfg.Redpanda.Brokers, logger)
+	if err != nil {
+		logger.Warn("Failed to initialize event producer", "error", err)
+	}
+	if producer != nil {
+		defer producer.Close()
+	}
+
+	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, producer, logger)
 	orchestratorHandler := handler.NewOrchestratorHandler(orchestratorService)
 
 	// Initialize Redpanda Consumer
-	consumer, err := events.NewConsumer(cfg.Redpanda.Brokers, "orchestrator-group", []string{events.TopicSubmissionCreated}, logger)
+	consumer, err := events.NewConsumerWithOptions(
+		cfg.Redpanda.Brokers,
+		"orchestrator-group",
+		[]string{events.TopicSubmissionCreated},
+		logger,
+		events.ConsumerOptions{PartitionConcurrency: 8},
+	)
 	if err != nil {
 		logger.Warn("Failed to initialize event consumer", "error", err)
 	} else {
 		// Register handler
-		consumer.RegisterHandler(events.TopicSubmissionCreated, func(ctx context.Context, topic string, key string, value []byte) error {
-			event, err := events.ParseEvent[events.SubmissionCreatedEvent](value)
-			if err != nil {
-				return err
-			}
-
+		events.RegisterJSONHandler[events.SubmissionCreatedEvent](consumer, events.TopicSubmissionCreated, func(ctx context.Context, key string, event events.SubmissionCreatedEvent) error {
 			logger.Info("Received submission created event, triggering deployment", "submission_id", event.SubmissionID)
 
 			// Trigger deployment
 			ports := []string{"8080"}
 			limits := domain.ResourceLimits{CPUMilli: 500, MemoryMB: 512}
-			_, err = orchestratorService.DeploySubmission(ctx, event.SubmissionID, event.ContainerImage, ports, limits)
+			_, err := orchestratorService.DeploySubmission(ctx, event.SubmissionID, event.ContainerImage, ports, limits)
 			return err
 		})
 

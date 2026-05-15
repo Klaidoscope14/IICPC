@@ -2,6 +2,8 @@ package events
 
 import contractevents "github.com/iicpc/pkg/contracts/events"
 
+const SchemaVersion = contractevents.SchemaVersion
+
 // Topic names for the event bus.
 const (
 	TopicSubmissionCreated   = contractevents.TopicSubmissionUploaded

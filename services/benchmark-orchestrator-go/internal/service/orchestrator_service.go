@@ -14,6 +14,8 @@ import (
 	"github.com/iicpc/benchmark-orchestrator-go/internal/container"
 	"github.com/iicpc/benchmark-orchestrator-go/internal/domain"
 	"github.com/iicpc/benchmark-orchestrator-go/internal/repository"
+	contractbenchmark "github.com/iicpc/pkg/contracts/benchmark"
+	"github.com/iicpc/pkg/events"
 )
 
 // OrchestratorService defines the contract for deployment and benchmark operations.
@@ -26,24 +28,26 @@ type OrchestratorService interface {
 }
 
 type orchestratorService struct {
-	repo           repository.OrchestratorRepository
-	scoring        *ScoringService
-	logger         *slog.Logger
-	containerMgr   container.Manager
+	repo          repository.OrchestratorRepository
+	scoring       *ScoringService
+	logger        *slog.Logger
+	containerMgr  container.Manager
+	eventProducer *events.Producer
 
 	// Track active benchmark goroutines for cancellation.
-	mu         sync.Mutex
-	cancelFns  map[string]context.CancelFunc
+	mu        sync.Mutex
+	cancelFns map[string]context.CancelFunc
 }
 
 // NewOrchestratorService creates a new OrchestratorService with persistent storage and scoring.
-func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, logger *slog.Logger) OrchestratorService {
+func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, eventProducer *events.Producer, logger *slog.Logger) OrchestratorService {
 	return &orchestratorService{
-		repo:         repo,
-		scoring:      scoring,
-		logger:       logger,
-		containerMgr: containerMgr,
-		cancelFns:    make(map[string]context.CancelFunc),
+		repo:          repo,
+		scoring:       scoring,
+		logger:        logger,
+		containerMgr:  containerMgr,
+		eventProducer: eventProducer,
+		cancelFns:     make(map[string]context.CancelFunc),
 	}
 }
 
@@ -78,12 +82,12 @@ func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID
 	)
 
 	// Use real container manager instead of simulation.
-	go s.executeDeployment(deployment.ID, containerImage, ports, limits)
+	go s.executeDeployment(deployment.ID, submissionID, containerImage, ports, limits)
 
 	return deployment, nil
 }
 
-func (s *orchestratorService) executeDeployment(deploymentID, containerImage string, ports []string, limits domain.ResourceLimits) {
+func (s *orchestratorService) executeDeployment(deploymentID, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -94,7 +98,17 @@ func (s *orchestratorService) executeDeployment(deploymentID, containerImage str
 	// This allows the orchestrator to actually start a container, manage its lifecycle,
 	// and run the benchmark simulation against a real running container process.
 	containerImage = "alpine:latest"
-	
+
+	if s.containerMgr == nil {
+		serviceURL := fmt.Sprintf("http://submission-%s:8080", submissionID[:8])
+		containerID := fmt.Sprintf("simulated-%s", deploymentID[:8])
+		s.logger.Warn("docker manager unavailable, marking deployment as simulated",
+			slog.String("deployment_id", deploymentID),
+		)
+		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+		return
+	}
+
 	opts := container.CreateOptions{
 		ImageName:      containerImage,
 		ContainerName:  fmt.Sprintf("submission-%s", deploymentID[:8]),
@@ -102,7 +116,7 @@ func (s *orchestratorService) executeDeployment(deploymentID, containerImage str
 		CPUMilli:       limits.CPUMilli,
 		MemoryMB:       limits.MemoryMB,
 		TimeoutSeconds: 60,
-		NetworkMode:    "host", // For simple networking in hackathon
+		NetworkMode:    "host",                   // For simple networking in hackathon
 		Cmd:            []string{"sleep", "120"}, // Dummy process
 	}
 
@@ -118,13 +132,36 @@ func (s *orchestratorService) executeDeployment(deploymentID, containerImage str
 		return
 	}
 
-	// Update deployment with success
-	err = s.repo.UpdateDeploymentStatus(ctx, deploymentID, domain.DeploymentStatusDeployed, containerID, serviceURL, "")
+	s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+}
+
+func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymentID, submissionID, serviceURL, containerID string) {
+	err := s.repo.UpdateDeploymentStatus(ctx, deploymentID, domain.DeploymentStatusDeployed, serviceURL, containerID, "")
 	if err != nil {
 		s.logger.Error("failed to update deployment status",
 			slog.String("deployment_id", deploymentID),
 			slog.String("error", err.Error()),
 		)
+		return
+	}
+
+	if s.eventProducer != nil {
+		eventCtx, eventCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer eventCancel()
+
+		err := s.eventProducer.PublishEngineReady(eventCtx, events.EngineReadyEvent{
+			DeploymentID: deploymentID,
+			SubmissionID: submissionID,
+			ServiceURL:   serviceURL,
+			ContainerID:  containerID,
+			ReadyAt:      time.Now().UTC(),
+		})
+		if err != nil {
+			s.logger.Warn("failed to publish engine ready event",
+				slog.String("deployment_id", deploymentID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 }
 
@@ -161,6 +198,24 @@ func (s *orchestratorService) StartBenchmark(ctx context.Context, submissionID, 
 		slog.String("benchmark_id", benchmark.ID),
 		slog.String("submission_id", submissionID),
 	)
+
+	if s.eventProducer != nil {
+		eventCtx, eventCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer eventCancel()
+
+		if err := s.eventProducer.PublishBenchmarkStarted(eventCtx, events.BenchmarkStartedEvent{
+			BenchmarkID:  benchmark.ID,
+			SubmissionID: submissionID,
+			DeploymentID: deploymentID,
+			Config:       toContractBenchmarkConfig(config),
+			StartedAt:    benchmark.StartedAt,
+		}); err != nil {
+			s.logger.Warn("failed to publish benchmark started event",
+				slog.String("benchmark_id", benchmark.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
 	go s.simulateBenchmark(benchCtx, benchmark.ID, config)
 
@@ -221,6 +276,8 @@ func (s *orchestratorService) simulateBenchmark(ctx context.Context, benchmarkID
 			s.repo.InsertTelemetrySnapshot(snapCtx, benchmarkID, &metrics)
 			snapCancel()
 
+			s.publishTelemetrySnapshot(benchmarkID, metrics)
+
 			// Update elapsed time.
 			updCtx, updCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			s.repo.UpdateBenchmarkStatus(updCtx, benchmarkID, domain.BenchmarkStatusRunning, elapsed, "")
@@ -275,6 +332,9 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 		s.logger.Error("failed to upsert benchmark result", slog.String("error", err.Error()))
 	}
 
+	s.publishBenchmarkFinished(ctx, benchmark, result, elapsed)
+	s.publishLeaderboardUpdated(ctx, benchmarkID)
+
 	s.logger.Info("benchmark completed",
 		slog.String("benchmark_id", benchmarkID),
 		slog.Float64("composite_score", score),
@@ -294,11 +354,11 @@ func (s *orchestratorService) runValidationEngine(benchmarkID string) float64 {
 	os.WriteFile(ordersPath, []byte("order_id,symbol,side,price,quantity,timestamp\n1,AAPL,BUY,100.5,10,1234567800\n"), 0644)
 
 	// Note: In production, the bot engine would produce the actual CSVs or Redpanda topics directly to this dir.
-	
+
 	enginePath, _ := filepath.Abs("../../high-performance/validation-engine-cpp/build/validation_engine")
 	cmd := exec.Command(enginePath, "--trades", tradesPath, "--orders", ordersPath)
 	cmd.Dir = workDir
-	
+
 	err := cmd.Run()
 	if err != nil {
 		s.logger.Warn("Validation engine detected correctness issues", slog.String("error", err.Error()))
@@ -353,4 +413,128 @@ func max(a, b int32) int32 {
 		return a
 	}
 	return b
+}
+
+func (s *orchestratorService) publishTelemetrySnapshot(benchmarkID string, metrics domain.TelemetryMetrics) {
+	if s.eventProducer == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	err := s.eventProducer.PublishAsync(ctx, events.TopicTelemetrySnapshot, benchmarkID, events.TelemetrySnapshotEvent{
+		BenchmarkID: benchmarkID,
+		Timestamp:   time.Now().UTC(),
+		Metrics:     toContractTelemetry(metrics),
+	}, nil)
+	if err != nil {
+		s.logger.Warn("failed to queue telemetry event",
+			slog.String("benchmark_id", benchmarkID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (s *orchestratorService) publishBenchmarkFinished(ctx context.Context, benchmark *domain.Benchmark, result *domain.BenchmarkResult, elapsed int64) {
+	if s.eventProducer == nil {
+		return
+	}
+
+	eventCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	err := s.eventProducer.PublishBenchmarkFinished(eventCtx, events.BenchmarkFinishedEvent{
+		BenchmarkID:      benchmark.ID,
+		SubmissionID:     benchmark.SubmissionID,
+		CompositeScore:   result.CompositeScore,
+		TPS:              result.TPS,
+		P99LatencyMs:     result.P99LatencyMs,
+		CorrectnessScore: result.CorrectnessScore,
+		ElapsedSeconds:   elapsed,
+		FinishedAt:       time.Now().UTC(),
+	})
+	if err != nil {
+		s.logger.Warn("failed to publish benchmark finished event",
+			slog.String("benchmark_id", benchmark.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (s *orchestratorService) publishLeaderboardUpdated(ctx context.Context, benchmarkID string) {
+	if s.eventProducer == nil {
+		return
+	}
+
+	entries, err := s.repo.GetLeaderboard(ctx, 50)
+	if err != nil {
+		s.logger.Warn("failed to load leaderboard for event",
+			slog.String("benchmark_id", benchmarkID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	eventCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	err = s.eventProducer.PublishLeaderboardUpdated(eventCtx, events.LeaderboardUpdatedEvent{
+		BenchmarkID: benchmarkID,
+		UpdatedAt:   time.Now().UTC(),
+		Entries:     toContractLeaderboard(entries),
+	})
+	if err != nil {
+		s.logger.Warn("failed to publish leaderboard updated event",
+			slog.String("benchmark_id", benchmarkID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func toContractBenchmarkConfig(config domain.BenchmarkConfig) contractbenchmark.Config {
+	return contractbenchmark.Config{
+		BotCount:        config.BotCount,
+		DurationSeconds: config.DurationSeconds,
+		OrdersPerSecond: config.OrdersPerSecond,
+		Protocols:       config.Protocols,
+	}
+}
+
+func toContractTelemetry(metrics domain.TelemetryMetrics) contractbenchmark.TelemetryMetrics {
+	return contractbenchmark.TelemetryMetrics{
+		CurrentTPS:              metrics.CurrentTPS,
+		AvgLatencyMs:            metrics.AvgLatencyMs,
+		TotalOrdersSent:         metrics.TotalOrdersSent,
+		TotalOrdersAcknowledged: metrics.TotalOrdersAcknowledged,
+		TotalErrors:             metrics.TotalErrors,
+		P50LatencyMs:            metrics.P50LatencyMs,
+		P90LatencyMs:            metrics.P90LatencyMs,
+		P99LatencyMs:            metrics.P99LatencyMs,
+		ActiveConnections:       metrics.ActiveConnections,
+		CPUUsagePercent:         metrics.CPUUsagePercent,
+		MemoryUsageMB:           metrics.MemoryUsageMB,
+	}
+}
+
+func toContractLeaderboard(entries []*domain.LeaderboardEntry) []contractbenchmark.LeaderboardEntry {
+	out := make([]contractbenchmark.LeaderboardEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		out = append(out, contractbenchmark.LeaderboardEntry{
+			Rank:             entry.Rank,
+			TeamName:         entry.TeamName,
+			TPS:              entry.TPS,
+			P50LatencyMs:     entry.P50LatencyMs,
+			P90LatencyMs:     entry.P90LatencyMs,
+			P99LatencyMs:     entry.P99LatencyMs,
+			CorrectnessScore: entry.CorrectnessScore,
+			TotalOrders:      entry.TotalOrders,
+			FailedOrders:     entry.FailedOrders,
+			CompositeScore:   entry.CompositeScore,
+		})
+	}
+	return out
 }

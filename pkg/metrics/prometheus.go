@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -18,35 +20,60 @@ type Metrics struct {
 
 // NewMetrics creates and registers Prometheus metrics for the given service.
 func NewMetrics(serviceName string) *Metrics {
+	requestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name:        "http_requests_total",
+			Help:        "Total number of HTTP requests.",
+			ConstLabels: prometheus.Labels{"service": serviceName},
+		},
+		[]string{"method", "path", "status"},
+	)
+	requestDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "http_request_duration_seconds",
+			Help:        "HTTP request duration in seconds.",
+			ConstLabels: prometheus.Labels{"service": serviceName},
+			Buckets:     prometheus.DefBuckets,
+		},
+		[]string{"method", "path"},
+	)
+	activeRequests := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name:        "http_active_requests",
+			Help:        "Number of active HTTP requests.",
+			ConstLabels: prometheus.Labels{"service": serviceName},
+		},
+	)
+
 	m := &Metrics{
-		RequestsTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name:        "http_requests_total",
-				Help:        "Total number of HTTP requests.",
-				ConstLabels: prometheus.Labels{"service": serviceName},
-			},
-			[]string{"method", "path", "status"},
+		RequestsTotal: registerOrReuse(
+			requestsTotal,
+			"counter",
 		),
-		RequestDuration: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:        "http_request_duration_seconds",
-				Help:        "HTTP request duration in seconds.",
-				ConstLabels: prometheus.Labels{"service": serviceName},
-				Buckets:     prometheus.DefBuckets,
-			},
-			[]string{"method", "path"},
+		RequestDuration: registerOrReuse(
+			requestDuration,
+			"histogram",
 		),
-		ActiveRequests: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Name:        "http_active_requests",
-				Help:        "Number of active HTTP requests.",
-				ConstLabels: prometheus.Labels{"service": serviceName},
-			},
+		ActiveRequests: registerOrReuse(
+			activeRequests,
+			"gauge",
 		),
 	}
-
-	prometheus.MustRegister(m.RequestsTotal, m.RequestDuration, m.ActiveRequests)
 	return m
+}
+
+func registerOrReuse[T prometheus.Collector](collector T, kind string) T {
+	if err := prometheus.Register(collector); err != nil {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			existing, ok := alreadyRegistered.ExistingCollector.(T)
+			if ok {
+				return existing
+			}
+		}
+		panic(fmt.Sprintf("failed to register prometheus %s: %v", kind, err))
+	}
+	return collector
 }
 
 // Middleware returns a Gin middleware that records Prometheus metrics per request.

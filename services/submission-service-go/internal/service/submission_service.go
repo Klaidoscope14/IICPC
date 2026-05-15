@@ -182,8 +182,12 @@ func (s *submissionService) publishEvents(submission *domain.Submission) {
 	if s.producer != nil {
 		event := events.SubmissionCreatedEvent{
 			SubmissionID:   submission.ID,
+			ContestantID:   submission.ContestantID,
 			TeamName:       submission.TeamName,
 			Language:       submission.Language,
+			Version:        submission.Version,
+			StoragePath:    submission.StoragePath,
+			Checksum:       submission.Checksum,
 			ContainerImage: fmt.Sprintf("iicpc/submission-%s:latest", submission.ID[:8]),
 			CreatedAt:      submission.CreatedAt,
 		}
@@ -286,6 +290,20 @@ func (s *submissionService) DeleteSubmission(ctx context.Context, id string) err
 
 	s.logger.Info("submission soft-deleted", slog.String("submission_id", id))
 
+	if s.producer != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			event := events.SubmissionDeletedEvent{
+				SubmissionID: id,
+				DeletedAt:    time.Now().UTC(),
+			}
+			if err := s.producer.PublishSubmissionDeleted(ctx, event); err != nil {
+				s.logger.Warn("failed to publish deletion event to redpanda", slog.String("error", err.Error()))
+			}
+		}()
+	}
+
 	// Publish deletion notification via Redis.
 	if s.redisPublisher != nil {
 		go func() {
@@ -303,4 +321,3 @@ func (s *submissionService) DeleteSubmission(ctx context.Context, id string) err
 
 	return nil
 }
-

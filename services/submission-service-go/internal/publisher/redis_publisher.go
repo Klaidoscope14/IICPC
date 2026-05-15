@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/iicpc/pkg/events"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -42,6 +43,12 @@ const (
 	ChannelSubmissionCreated = "submission:created"
 	ChannelSubmissionDeleted = "submission:deleted"
 	ChannelSubmissionStatus  = "submission:status"
+	ChannelValidationDone    = "validation:completed"
+	ChannelEngineReady       = "engine:ready"
+	ChannelBenchmarkStarted  = "benchmark:started"
+	ChannelBenchmarkFinished = "benchmark:finished"
+	ChannelTelemetrySnapshot = "telemetry:snapshot"
+	ChannelLeaderboardUpdate = "leaderboard:updated"
 )
 
 // SubmissionEvent is the lightweight Redis notification payload.
@@ -68,7 +75,36 @@ func (p *RedisPublisher) PublishSubmissionStatus(ctx context.Context, event Subm
 	return p.publish(ctx, ChannelSubmissionStatus, event)
 }
 
-func (p *RedisPublisher) publish(ctx context.Context, channel string, event interface{}) error {
+func (p *RedisPublisher) PublishValidationCompleted(ctx context.Context, event events.ValidationCompletedEvent) error {
+	return p.publish(ctx, ChannelValidationDone, event)
+}
+
+func (p *RedisPublisher) PublishEngineReady(ctx context.Context, event events.EngineReadyEvent) error {
+	return p.publish(ctx, ChannelEngineReady, event)
+}
+
+func (p *RedisPublisher) PublishBenchmarkStarted(ctx context.Context, event events.BenchmarkStartedEvent) error {
+	return p.publish(ctx, ChannelBenchmarkStarted, event)
+}
+
+func (p *RedisPublisher) PublishBenchmarkFinished(ctx context.Context, event events.BenchmarkFinishedEvent) error {
+	return p.publish(ctx, ChannelBenchmarkFinished, event)
+}
+
+func (p *RedisPublisher) PublishTelemetrySnapshot(ctx context.Context, event events.TelemetrySnapshotEvent) error {
+	return p.publish(ctx, ChannelTelemetrySnapshot, event)
+}
+
+func (p *RedisPublisher) PublishLeaderboardUpdated(ctx context.Context, event events.LeaderboardUpdatedEvent) error {
+	return p.publish(ctx, ChannelLeaderboardUpdate, event)
+}
+
+// Publish sends a JSON payload to an explicit Redis channel.
+func (p *RedisPublisher) Publish(ctx context.Context, channel string, event any) error {
+	return p.publish(ctx, channel, event)
+}
+
+func (p *RedisPublisher) publish(ctx context.Context, channel string, event any) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
