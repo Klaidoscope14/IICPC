@@ -81,6 +81,7 @@ func main() {
 
 	// Set up router with middleware.
 	router := gin.Default()
+	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestLogger(logger))
 

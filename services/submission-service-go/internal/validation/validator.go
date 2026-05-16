@@ -1,24 +1,20 @@
 package validation
 
 import (
+	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"unicode"
 
+	"github.com/iicpc/pkg/security"
 	"github.com/iicpc/submission-service-go/internal/domain"
 )
 
 // zipMagicBytes is the ZIP file signature (PK\x03\x04).
 var zipMagicBytes = []byte{0x50, 0x4B, 0x03, 0x04}
-
-// safeFilenameRegex allows only alphanumeric, underscores, hyphens, and dots.
-var safeFilenameRegex = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
 
 // defaultAllowedMIMETypes is the set of MIME types accepted for uploads.
 var defaultAllowedMIMETypes = map[string]bool{
@@ -114,36 +110,34 @@ func (v *UploadValidator) ValidateAndHash(src io.Reader, dst io.Writer) (checksu
 	return checksumHex, totalBytes, nil
 }
 
+// ValidateArchiveStructure checks central-directory metadata without buffering
+// archive contents. It catches path traversal, dangerous files, and zip bombs
+// before the upload is committed.
+func (v *UploadValidator) ValidateArchiveStructure(readerAt io.ReaderAt, size int64) error {
+	if err := v.ValidateFileSize(size); err != nil {
+		return err
+	}
+
+	reader, err := zip.NewReader(readerAt, size)
+	if err != nil {
+		return fmt.Errorf("%w: failed to read zip directory", domain.ErrInvalidArchive)
+	}
+
+	limits := security.DefaultArchiveLimits()
+	if _, err := security.ValidateZipReader(reader, limits); err != nil {
+		switch {
+		case errors.Is(err, security.ErrArchiveTooLarge), errors.Is(err, security.ErrTooManyArchiveFiles):
+			return fmt.Errorf("%w: %v", domain.ErrFileTooLarge, err)
+		default:
+			return fmt.Errorf("%w: %v", domain.ErrInvalidArchive, err)
+		}
+	}
+	return nil
+}
+
 // SanitizeFilename cleans a filename to prevent path traversal and injection attacks.
 // It strips directory components, removes Unicode control characters,
 // and collapses the name to [a-zA-Z0-9_.-] characters.
 func SanitizeFilename(filename string) string {
-	// Strip any directory path components.
-	filename = filepath.Base(filename)
-
-	// Remove Unicode control characters.
-	filename = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, filename)
-
-	// Replace unsafe characters with underscores.
-	filename = safeFilenameRegex.ReplaceAllString(filename, "_")
-
-	// Collapse consecutive underscores.
-	for strings.Contains(filename, "__") {
-		filename = strings.ReplaceAll(filename, "__", "_")
-	}
-
-	// Trim leading/trailing underscores and dots (prevent hidden files / empty names).
-	filename = strings.Trim(filename, "_.")
-
-	// Fallback if the filename is empty after sanitization.
-	if filename == "" {
-		filename = "submission"
-	}
-
-	return filename
+	return security.SanitizeFilename(filename)
 }

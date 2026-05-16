@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	units "github.com/docker/go-units"
 )
 
 // Manager defines the contract for container lifecycle operations.
@@ -46,9 +47,11 @@ type CreateOptions struct {
 	ExposedPorts   []string
 	CPUMilli       int64
 	MemoryMB       int64
+	PidsLimit      int64
 	TimeoutSeconds int64
 	NetworkMode    string // e.g., "bridge" or a custom network name
 	Cmd            []string
+	RunAsUser      string
 }
 
 // DockerManager implements Manager using the Docker Engine API.
@@ -117,27 +120,39 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 	if opts.CPUMilli > 0 {
 		// NanoCPUs: 1 CPU = 1e9 nanoCPUs. 1000 milli = 1 CPU.
 		resources.NanoCPUs = opts.CPUMilli * 1_000_000
-		
+
 		// Map 1000m CPUs to 1 physical core for pinning (simple heuristic for sandbox)
 		cores := (opts.CPUMilli + 999) / 1000
 		resources.CpusetCpus = fmt.Sprintf("0-%d", cores-1)
-		
-		// Add PidsLimit to prevent fork bombs
-		var pidsLimit int64 = 100
-		resources.PidsLimit = &pidsLimit
 	}
 	if opts.MemoryMB > 0 {
 		resources.Memory = opts.MemoryMB * 1024 * 1024
+		resources.MemorySwap = resources.Memory
+	}
+	pidsLimit := opts.PidsLimit
+	if pidsLimit <= 0 {
+		pidsLimit = 100
+	}
+	resources.PidsLimit = &pidsLimit
+	resources.Ulimits = []*units.Ulimit{
+		{Name: "nofile", Soft: 1024, Hard: 1024},
+		{Name: "nproc", Soft: pidsLimit, Hard: pidsLimit},
+	}
+
+	runAsUser := opts.RunAsUser
+	if runAsUser == "" {
+		runAsUser = "65532:65532"
 	}
 
 	hostConfig := &container.HostConfig{
-		PortBindings:  portBindings,
-		Resources:     resources,
-		NetworkMode:   container.NetworkMode(opts.NetworkMode),
-		RestartPolicy: container.RestartPolicy{Name: "no"},
+		PortBindings:   portBindings,
+		Resources:      resources,
+		NetworkMode:    container.NetworkMode(opts.NetworkMode),
+		RestartPolicy:  container.RestartPolicy{Name: "no"},
 		ReadonlyRootfs: true, // Read-only filesystem
-		SecurityOpt:   []string{"no-new-privileges"},
-		CapDrop:       []string{"ALL"},
+		SecurityOpt:    []string{"no-new-privileges"},
+		CapDrop:        []string{"ALL"},
+		Init:           boolPtr(true),
 		Tmpfs: map[string]string{
 			"/tmp": "rw,noexec,nosuid,size=64m",
 		},
@@ -148,6 +163,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 			Image:        opts.ImageName,
 			ExposedPorts: exposedPorts,
 			Cmd:          opts.Cmd,
+			User:         runAsUser,
 		},
 		hostConfig,
 		nil, nil, opts.ContainerName,
@@ -185,6 +201,10 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 	)
 
 	return resp.ID, serviceURL, nil
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func (m *DockerManager) Stop(ctx context.Context, containerID string) error {

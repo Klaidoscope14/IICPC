@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/iicpc/pkg/events"
+	"github.com/iicpc/pkg/middleware"
 	"github.com/iicpc/validation-service-go/config"
 	"github.com/iicpc/validation-service-go/internal/consumer"
 	"github.com/iicpc/validation-service-go/internal/domain"
@@ -95,6 +96,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
+	router.Use(middleware.SecurityHeaders())
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

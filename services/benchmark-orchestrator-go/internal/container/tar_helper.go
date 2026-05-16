@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/iicpc/pkg/security"
 )
 
 // ConvertZipToTar reads a ZIP file from zipPath and returns a buffer containing the equivalent TAR archive.
@@ -20,46 +20,30 @@ func ConvertZipToTar(zipPath string) (*bytes.Buffer, error) {
 	}
 	defer reader.Close()
 
+	limits := security.DefaultArchiveLimits()
+	report, err := security.ValidateZipReader(&reader.Reader, limits)
+	if err != nil {
+		return nil, fmt.Errorf("unsafe build archive: %w", err)
+	}
+
 	// Detect if there's a single top-level directory.
-	var commonPrefix string
-	var hasCommonPrefix = true
-	var firstLoop = true
-
-	for _, file := range reader.File {
-		cleanName := filepath.Clean(file.Name)
-		parts := strings.Split(cleanName, string(os.PathSeparator))
-		if len(parts) == 0 {
-			continue
-		}
-		prefix := parts[0]
-		if firstLoop {
-			commonPrefix = prefix
-			firstLoop = false
-		} else if prefix != commonPrefix {
-			hasCommonPrefix = false
-		}
-	}
-
-	if !hasCommonPrefix {
-		commonPrefix = ""
-	} else {
-		// Ensure the common prefix is actually a directory (or the only thing)
-		commonPrefix += "/"
-	}
+	commonPrefix := commonTopLevelPrefix(report.Files)
 
 	var buf bytes.Buffer
 	tarWriter := tar.NewWriter(&buf)
 	defer tarWriter.Close()
 
 	for _, file := range reader.File {
-		// Path traversal check
-		cleanName := filepath.Clean(file.Name)
-		if strings.Contains(cleanName, "..") || filepath.IsAbs(cleanName) {
-			continue
+		cleanName, err := security.SafeArchivePath(file.Name, limits)
+		if err != nil {
+			return nil, fmt.Errorf("unsafe build archive entry %q: %w", file.Name, err)
+		}
+		if err := security.ValidateArchiveEntry(cleanName, file.Mode()); err != nil {
+			return nil, fmt.Errorf("dangerous build archive entry %q: %w", file.Name, err)
 		}
 
 		// Remove common prefix if it exists
-		tarName := file.Name
+		tarName := cleanName
 		if commonPrefix != "" && strings.HasPrefix(tarName, commonPrefix) {
 			tarName = strings.TrimPrefix(tarName, commonPrefix)
 			if tarName == "" {
@@ -68,7 +52,10 @@ func ConvertZipToTar(zipPath string) (*bytes.Buffer, error) {
 		}
 
 		// Normalize paths for tar
-		tarName = filepath.ToSlash(filepath.Clean(tarName))
+		tarName, err = security.SafeArchivePath(tarName, limits)
+		if err != nil {
+			return nil, fmt.Errorf("unsafe normalized tar path %q: %w", tarName, err)
+		}
 
 		header := &tar.Header{
 			Name:     tarName,
@@ -93,7 +80,13 @@ func ConvertZipToTar(zipPath string) (*bytes.Buffer, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to open zip entry %s: %w", tarName, err)
 			}
-			_, err = io.Copy(tarWriter, src)
+			_, err = io.CopyN(tarWriter, src, int64(file.UncompressedSize64))
+			if err == nil {
+				var extra [1]byte
+				if n, extraErr := src.Read(extra[:]); extraErr == nil && n > 0 {
+					err = fmt.Errorf("zip entry %s exceeded declared size", tarName)
+				}
+			}
 			src.Close()
 			if err != nil {
 				return nil, fmt.Errorf("failed to copy content for %s: %w", tarName, err)
@@ -102,4 +95,27 @@ func ConvertZipToTar(zipPath string) (*bytes.Buffer, error) {
 	}
 
 	return &buf, nil
+}
+
+func commonTopLevelPrefix(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	prefix := ""
+	for i, file := range files {
+		parts := strings.Split(file, "/")
+		if len(parts) < 2 {
+			return ""
+		}
+		if i == 0 {
+			prefix = parts[0]
+			continue
+		}
+		if parts[0] != prefix {
+			return ""
+		}
+	}
+
+	return prefix + "/"
 }

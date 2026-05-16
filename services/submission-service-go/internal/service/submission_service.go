@@ -105,6 +105,17 @@ func (s *submissionService) UploadSubmission(ctx context.Context, req *domain.Cr
 	if archiveReader == nil {
 		archiveReader = bytes.NewReader(req.CodeArchive)
 	}
+	if seekable, ok := archiveReader.(interface {
+		io.ReaderAt
+		io.Seeker
+	}); ok {
+		if err := s.validator.ValidateArchiveStructure(seekable, req.FileSize); err != nil {
+			return nil, err
+		}
+		if _, err := seekable.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("%w: failed to rewind archive", domain.ErrInvalidArchive)
+		}
+	}
 
 	checksum, bytesWritten, storagePath, err := s.validateAndStore(ctx, objectKey, archiveReader)
 	if err != nil {

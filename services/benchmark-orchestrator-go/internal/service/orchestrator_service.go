@@ -155,9 +155,11 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		ExposedPorts:   ports,
 		CPUMilli:       limits.CPUMilli,
 		MemoryMB:       limits.MemoryMB,
+		PidsLimit:      100,
 		TimeoutSeconds: 60,
-		NetworkMode:    "none", // Isolated network per sandbox requirements
+		NetworkMode:    "none",     // Isolated network per sandbox requirements
 		Cmd:            []string{}, // Allow the image's ENTRYPOINT to run
+		RunAsUser:      "65532:65532",
 	}
 
 	containerID, serviceURL, err := s.containerMgr.CreateAndStart(ctx, opts)

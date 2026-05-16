@@ -2,13 +2,14 @@ package extractor
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
+	"github.com/iicpc/pkg/security"
 	"github.com/iicpc/validation-service-go/internal/domain"
 )
 
@@ -21,8 +22,8 @@ var bufferPool = sync.Pool{
 
 // Extractor handles secure ZIP extraction with safety guards.
 type Extractor struct {
-	maxBytes    int64
-	maxFiles    int
+	maxBytes int64
+	maxFiles int
 }
 
 // NewExtractor creates an Extractor with the given size and file count limits.
@@ -51,10 +52,11 @@ func (e *Extractor) Extract(zipPath string) (*ExtractResult, error) {
 	}
 	defer reader.Close()
 
-	// Pre-flight: check file count.
-	if len(reader.File) > e.maxFiles {
-		return nil, fmt.Errorf("%w: archive contains %d files (max %d)",
-			domain.ErrTooManyFiles, len(reader.File), e.maxFiles)
+	limits := security.DefaultArchiveLimits()
+	limits.MaxFiles = e.maxFiles
+	limits.MaxUncompressedBytes = e.maxBytes
+	if _, err := security.ValidateZipReader(&reader.Reader, limits); err != nil {
+		return nil, mapArchiveSecurityError(err)
 	}
 
 	// Create temp directory for extraction.
@@ -85,23 +87,21 @@ func (e *Extractor) Extract(zipPath string) (*ExtractResult, error) {
 
 // extractFile extracts a single file from the archive with all safety checks.
 func (e *Extractor) extractFile(file *zip.File, destDir string, result *ExtractResult) error {
-	// Path traversal prevention: reject entries with ".." or absolute paths.
-	cleanName := filepath.Clean(file.Name)
-	if strings.Contains(cleanName, "..") || filepath.IsAbs(cleanName) {
-		return fmt.Errorf("%w: entry '%s'", domain.ErrPathTraversal, file.Name)
+	limits := security.DefaultArchiveLimits()
+	limits.MaxFiles = e.maxFiles
+	limits.MaxUncompressedBytes = e.maxBytes
+
+	cleanName, err := security.SafeArchivePath(file.Name, limits)
+	if err != nil {
+		return fmt.Errorf("%w: entry '%s': %v", domain.ErrPathTraversal, file.Name, err)
+	}
+	if err := security.ValidateArchiveEntry(cleanName, file.Mode()); err != nil {
+		return fmt.Errorf("%w: entry '%s': %v", domain.ErrDangerousFile, file.Name, err)
 	}
 
-	destPath := filepath.Join(destDir, cleanName)
-
-	// Ensure the resolved path is still within destDir (symlink-following check).
-	if !strings.HasPrefix(destPath, filepath.Clean(destDir)+string(os.PathSeparator)) &&
-		destPath != filepath.Clean(destDir) {
+	destPath, err := security.SafeJoin(destDir, cleanName)
+	if err != nil {
 		return fmt.Errorf("%w: entry '%s' resolves outside destination", domain.ErrPathTraversal, file.Name)
-	}
-
-	// Skip symlinks entirely — they're a security risk.
-	if file.Mode()&os.ModeSymlink != 0 {
-		return nil
 	}
 
 	if file.FileInfo().IsDir() {
@@ -125,7 +125,7 @@ func (e *Extractor) extractFile(file *zip.File, destDir string, result *ExtractR
 	}
 	defer src.Close()
 
-	dst, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode().Perm())
+	dst, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, safeExtractPerm(file.Mode()))
 	if err != nil {
 		return fmt.Errorf("%w: failed to create '%s': %v", domain.ErrExtractionFailed, cleanName, err)
 	}
@@ -154,6 +154,30 @@ func (e *Extractor) extractFile(file *zip.File, destDir string, result *ExtractR
 	result.Files = append(result.Files, cleanName)
 
 	return nil
+}
+
+func mapArchiveSecurityError(err error) error {
+	switch {
+	case errors.Is(err, security.ErrTooManyArchiveFiles):
+		return fmt.Errorf("%w: %v", domain.ErrTooManyFiles, err)
+	case errors.Is(err, security.ErrArchiveTooLarge):
+		return fmt.Errorf("%w: %v", domain.ErrSizeBomb, err)
+	case errors.Is(err, security.ErrDangerousFile):
+		return fmt.Errorf("%w: %v", domain.ErrDangerousFile, err)
+	case errors.Is(err, security.ErrUnsafeArchiveEntry):
+		return fmt.Errorf("%w: %v", domain.ErrPathTraversal, err)
+	default:
+		return fmt.Errorf("%w: %v", domain.ErrExtractionFailed, err)
+	}
+}
+
+func safeExtractPerm(mode os.FileMode) os.FileMode {
+	perm := mode.Perm()
+	if perm == 0 {
+		return 0600
+	}
+	perm &^= 0111
+	return perm
 }
 
 // detectActualRoot handles the common case where all files are nested in a
