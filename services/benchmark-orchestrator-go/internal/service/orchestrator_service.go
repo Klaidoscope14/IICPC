@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,11 +21,17 @@ import (
 
 // OrchestratorService defines the contract for deployment and benchmark operations.
 type OrchestratorService interface {
+	BuildAndDeploy(ctx context.Context, submissionID string) (*domain.Deployment, error)
 	DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) (*domain.Deployment, error)
 	StartBenchmark(ctx context.Context, submissionID, deploymentID string, config domain.BenchmarkConfig) (*domain.Benchmark, error)
 	GetBenchmarkStatus(ctx context.Context, benchmarkID string) (*domain.Benchmark, error)
 	StopBenchmark(ctx context.Context, benchmarkID string) error
 	GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error)
+}
+
+// StorageClient defines how the orchestrator accesses archived submissions.
+type StorageClient interface {
+	DownloadArchive(ctx context.Context, storagePath string, destinationPath string) error
 }
 
 type orchestratorService struct {
@@ -33,6 +40,7 @@ type orchestratorService struct {
 	logger        *slog.Logger
 	containerMgr  container.Manager
 	eventProducer *events.Producer
+	storage       StorageClient
 
 	// Track active benchmark goroutines for cancellation.
 	mu        sync.Mutex
@@ -40,15 +48,53 @@ type orchestratorService struct {
 }
 
 // NewOrchestratorService creates a new OrchestratorService with persistent storage and scoring.
-func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, eventProducer *events.Producer, logger *slog.Logger) OrchestratorService {
+func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, eventProducer *events.Producer, storage StorageClient, logger *slog.Logger) OrchestratorService {
 	return &orchestratorService{
 		repo:          repo,
 		scoring:       scoring,
 		logger:        logger,
 		containerMgr:  containerMgr,
 		eventProducer: eventProducer,
+		storage:       storage,
 		cancelFns:     make(map[string]context.CancelFunc),
 	}
+}
+
+func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID string) (*domain.Deployment, error) {
+	if submissionID == "" {
+		return nil, fmt.Errorf("%w: submission_id is required", domain.ErrInvalidInput)
+	}
+
+	storagePath, err := s.repo.GetSubmissionStoragePath(ctx, submissionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage path: %w", err)
+	}
+
+	tempZipPath := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-%s.zip", submissionID))
+	defer os.Remove(tempZipPath)
+
+	if err := s.storage.DownloadArchive(ctx, storagePath, tempZipPath); err != nil {
+		return nil, fmt.Errorf("failed to download archive: %w", err)
+	}
+
+	tarBuf, err := container.ConvertZipToTar(tempZipPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert zip to tar: %w", err)
+	}
+
+	imageName := fmt.Sprintf("submission-%s:latest", submissionID[:8])
+
+	s.logger.Info("building docker image", slog.String("submission_id", submissionID), slog.String("image", imageName))
+	if err := s.containerMgr.BuildImage(ctx, tarBuf, imageName); err != nil {
+		return nil, fmt.Errorf("failed to build image: %w", err)
+	}
+
+	// For now we assume a standard set of ports and limits as defined by the platform.
+	// In the real system, these would be read from the contract or validation event.
+	ports := []string{"8080"}
+	limits := domain.ResourceLimits{CPUMilli: 1000, MemoryMB: 512}
+
+	return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
 }
 
 func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) (*domain.Deployment, error) {
@@ -93,12 +139,6 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 
 	s.logger.Info("starting deployment", slog.String("deployment_id", deploymentID))
 
-	// For the simulation, since we haven't implemented the Docker Image Builder worker yet,
-	// we will force the use of a lightweight dummy image (alpine) that just sleeps.
-	// This allows the orchestrator to actually start a container, manage its lifecycle,
-	// and run the benchmark simulation against a real running container process.
-	containerImage = "alpine:latest"
-
 	if s.containerMgr == nil {
 		serviceURL := fmt.Sprintf("http://submission-%s:8080", submissionID[:8])
 		containerID := fmt.Sprintf("simulated-%s", deploymentID[:8])
@@ -116,13 +156,8 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		CPUMilli:       limits.CPUMilli,
 		MemoryMB:       limits.MemoryMB,
 		TimeoutSeconds: 60,
-		NetworkMode:    "host",                   // For simple networking in hackathon
-		Cmd:            []string{"sleep", "120"}, // Dummy process
-	}
-
-	// Pull the dummy image first
-	if err := s.containerMgr.PullImage(ctx, containerImage); err != nil {
-		s.logger.Warn("failed to pull image, continuing anyway", slog.String("error", err.Error()))
+		NetworkMode:    "none", // Isolated network per sandbox requirements
+		Cmd:            []string{}, // Allow the image's ENTRYPOINT to run
 	}
 
 	containerID, serviceURL, err := s.containerMgr.CreateAndStart(ctx, opts)
@@ -339,6 +374,19 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 		slog.String("benchmark_id", benchmarkID),
 		slog.Float64("composite_score", score),
 	)
+
+	// Sandbox Auto Cleanup: Stop and remove the container
+	if s.containerMgr != nil {
+		deployment, err := s.repo.GetDeploymentByID(ctx, benchmark.DeploymentID)
+		if err == nil && deployment.ContainerID != "" && !strings.HasPrefix(deployment.ContainerID, "simulated") {
+			go func(cID string) {
+				cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cleanCancel()
+				s.containerMgr.Stop(cleanCtx, cID)
+				s.containerMgr.Remove(cleanCtx, cID)
+			}(deployment.ContainerID)
+		}
+	}
 }
 
 func (s *orchestratorService) runValidationEngine(benchmarkID string) float64 {

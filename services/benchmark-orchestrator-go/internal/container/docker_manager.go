@@ -112,14 +112,35 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 		portBindings[port] = []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: ""}}
 	}
 
-	// Resource limits.
+	// Resource limits and Security Options for Sandboxing.
 	resources := container.Resources{}
 	if opts.CPUMilli > 0 {
 		// NanoCPUs: 1 CPU = 1e9 nanoCPUs. 1000 milli = 1 CPU.
 		resources.NanoCPUs = opts.CPUMilli * 1_000_000
+		
+		// Map 1000m CPUs to 1 physical core for pinning (simple heuristic for sandbox)
+		cores := (opts.CPUMilli + 999) / 1000
+		resources.CpusetCpus = fmt.Sprintf("0-%d", cores-1)
+		
+		// Add PidsLimit to prevent fork bombs
+		var pidsLimit int64 = 100
+		resources.PidsLimit = &pidsLimit
 	}
 	if opts.MemoryMB > 0 {
 		resources.Memory = opts.MemoryMB * 1024 * 1024
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings:  portBindings,
+		Resources:     resources,
+		NetworkMode:   container.NetworkMode(opts.NetworkMode),
+		RestartPolicy: container.RestartPolicy{Name: "no"},
+		ReadonlyRootfs: true, // Read-only filesystem
+		SecurityOpt:   []string{"no-new-privileges"},
+		CapDrop:       []string{"ALL"},
+		Tmpfs: map[string]string{
+			"/tmp": "rw,noexec,nosuid,size=64m",
+		},
 	}
 
 	resp, err := m.client.ContainerCreate(ctx,
@@ -128,12 +149,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 			ExposedPorts: exposedPorts,
 			Cmd:          opts.Cmd,
 		},
-		&container.HostConfig{
-			PortBindings:  portBindings,
-			Resources:     resources,
-			NetworkMode:   container.NetworkMode(opts.NetworkMode),
-			RestartPolicy: container.RestartPolicy{Name: "no"},
-		},
+		hostConfig,
 		nil, nil, opts.ContainerName,
 	)
 	if err != nil {

@@ -17,6 +17,7 @@ type OrchestratorRepository interface {
 	CreateDeployment(ctx context.Context, deployment *domain.Deployment) error
 	GetDeploymentByID(ctx context.Context, id string) (*domain.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status domain.DeploymentStatus, serviceURL string, containerID string, errMsg string) error
+	GetSubmissionStoragePath(ctx context.Context, submissionID string) (string, error)
 
 	// Benchmarks
 	CreateBenchmark(ctx context.Context, benchmark *domain.Benchmark) error
@@ -136,6 +137,19 @@ func (r *postgresRepository) UpdateDeploymentStatus(ctx context.Context, id stri
 		return fmt.Errorf("failed to update deployment status: %w", err)
 	}
 	return nil
+}
+
+func (r *postgresRepository) GetSubmissionStoragePath(ctx context.Context, submissionID string) (string, error) {
+	query := `SELECT storage_path FROM submissions WHERE id = $1`
+	var path string
+	err := r.db.QueryRowContext(ctx, query, submissionID).Scan(&path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("%w: submission %s", domain.ErrNotFound, submissionID)
+		}
+		return "", fmt.Errorf("failed to get storage path: %w", err)
+	}
+	return path, nil
 }
 
 // --- Benchmarks ---

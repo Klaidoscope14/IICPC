@@ -13,6 +13,7 @@ import (
 	"github.com/iicpc/benchmark-orchestrator-go/internal/handler"
 	"github.com/iicpc/benchmark-orchestrator-go/internal/repository"
 	"github.com/iicpc/benchmark-orchestrator-go/internal/service"
+	"github.com/iicpc/benchmark-orchestrator-go/internal/storage"
 	"github.com/iicpc/pkg/events"
 	"github.com/iicpc/pkg/logging"
 	"github.com/iicpc/pkg/metrics"
@@ -50,6 +51,7 @@ func main() {
 	// Wire up dependencies.
 	repo := repository.NewPostgresRepository(db)
 	scoring := service.NewScoringService(domain.DefaultScoringWeights())
+	storageClient := storage.NewLocalStorageClient()
 
 	producer, err := events.NewProducer(cfg.Redpanda.Brokers, logger)
 	if err != nil {
@@ -59,14 +61,14 @@ func main() {
 		defer producer.Close()
 	}
 
-	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, producer, logger)
+	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, producer, storageClient, logger)
 	orchestratorHandler := handler.NewOrchestratorHandler(orchestratorService)
 
 	// Initialize Redpanda Consumer
 	consumer, err := events.NewConsumerWithOptions(
 		cfg.Redpanda.Brokers,
 		"orchestrator-group",
-		[]string{events.TopicSubmissionCreated},
+		[]string{events.TopicValidationCompleted},
 		logger,
 		events.ConsumerOptions{PartitionConcurrency: 8},
 	)
@@ -74,13 +76,14 @@ func main() {
 		logger.Warn("Failed to initialize event consumer", "error", err)
 	} else {
 		// Register handler
-		events.RegisterJSONHandler[events.SubmissionCreatedEvent](consumer, events.TopicSubmissionCreated, func(ctx context.Context, key string, event events.SubmissionCreatedEvent) error {
-			logger.Info("Received submission created event, triggering deployment", "submission_id", event.SubmissionID)
+		events.RegisterJSONHandler[events.ValidationCompletedEvent](consumer, events.TopicValidationCompleted, func(ctx context.Context, key string, event events.ValidationCompletedEvent) error {
+			if event.Status != "passed" {
+				logger.Info("Skipping deployment, validation did not pass", "submission_id", event.SubmissionID, "status", event.Status)
+				return nil
+			}
 
-			// Trigger deployment
-			ports := []string{"8080"}
-			limits := domain.ResourceLimits{CPUMilli: 500, MemoryMB: 512}
-			_, err := orchestratorService.DeploySubmission(ctx, event.SubmissionID, event.ContainerImage, ports, limits)
+			logger.Info("Received validation completed event, triggering build and deploy", "submission_id", event.SubmissionID)
+			_, err := orchestratorService.BuildAndDeploy(ctx, event.SubmissionID)
 			return err
 		})
 
