@@ -47,16 +47,16 @@ const (
 )
 
 type Benchmark struct {
-	ID           string          `json:"id"`
-	SubmissionID string          `json:"submission_id"`
-	DeploymentID string          `json:"deployment_id"`
-	Status       BenchmarkStatus `json:"status"`
-	Config       BenchmarkConfig `json:"config"`
-	StartedAt    time.Time       `json:"started_at"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	ElapsedTime  int64           `json:"elapsed_time"`
+	ID           string           `json:"id"`
+	SubmissionID string           `json:"submission_id"`
+	DeploymentID string           `json:"deployment_id"`
+	Status       BenchmarkStatus  `json:"status"`
+	Config       BenchmarkConfig  `json:"config"`
+	StartedAt    time.Time        `json:"started_at"`
+	CompletedAt  *time.Time       `json:"completed_at,omitempty"`
+	ElapsedTime  int64            `json:"elapsed_time"`
 	Metrics      TelemetryMetrics `json:"metrics"`
-	ErrorMessage string          `json:"error_message,omitempty"`
+	ErrorMessage string           `json:"error_message,omitempty"`
 }
 
 type BenchmarkConfig struct {
@@ -64,6 +64,18 @@ type BenchmarkConfig struct {
 	DurationSeconds int32    `json:"duration_seconds"`
 	OrdersPerSecond int32    `json:"orders_per_second"`
 	Protocols       []string `json:"protocols"`
+}
+
+// --- Submission logs ---
+
+type SubmissionLog struct {
+	ID           string            `json:"id"`
+	SubmissionID string            `json:"submission_id"`
+	LogType      string            `json:"log_type"`
+	Message      string            `json:"message"`
+	Level        string            `json:"level"`
+	Metadata     map[string]string `json:"metadata"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 // --- Telemetry ---

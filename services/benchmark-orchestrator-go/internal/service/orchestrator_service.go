@@ -34,6 +34,32 @@ type StorageClient interface {
 	DownloadArchive(ctx context.Context, storagePath string, destinationPath string) error
 }
 
+// Options controls orchestrator timeouts and container lifecycle policy.
+type Options struct {
+	BuildTimeout       time.Duration
+	DeployTimeout      time.Duration
+	HealthProbeTimeout time.Duration
+	IdleContainerTTL   time.Duration
+	RestartAttempts    int
+	SandboxNetworkMode string
+	SandboxBindHost    string
+	SandboxServiceHost string
+}
+
+// DefaultOptions returns conservative defaults for local development.
+func DefaultOptions() Options {
+	return Options{
+		BuildTimeout:       5 * time.Minute,
+		DeployTimeout:      3 * time.Minute,
+		HealthProbeTimeout: 30 * time.Second,
+		IdleContainerTTL:   30 * time.Minute,
+		RestartAttempts:    1,
+		SandboxNetworkMode: "bridge",
+		SandboxBindHost:    "127.0.0.1",
+		SandboxServiceHost: "localhost",
+	}
+}
+
 type orchestratorService struct {
 	repo          repository.OrchestratorRepository
 	scoring       *ScoringService
@@ -41,23 +67,43 @@ type orchestratorService struct {
 	containerMgr  container.Manager
 	eventProducer *events.Producer
 	storage       StorageClient
+	opts          Options
 
-	// Track active benchmark goroutines for cancellation.
-	mu        sync.Mutex
-	cancelFns map[string]context.CancelFunc
+	mu                     sync.Mutex
+	cancelFns              map[string]context.CancelFunc
+	deployments            map[string]*deploymentState
+	deploymentBySubmission map[string]string
 }
 
 // NewOrchestratorService creates a new OrchestratorService with persistent storage and scoring.
-func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, eventProducer *events.Producer, storage StorageClient, logger *slog.Logger) OrchestratorService {
-	return &orchestratorService{
-		repo:          repo,
-		scoring:       scoring,
-		logger:        logger,
-		containerMgr:  containerMgr,
-		eventProducer: eventProducer,
-		storage:       storage,
-		cancelFns:     make(map[string]context.CancelFunc),
+func NewOrchestratorService(repo repository.OrchestratorRepository, scoring *ScoringService, containerMgr container.Manager, eventProducer *events.Producer, storage StorageClient, logger *slog.Logger, optionOverrides ...Options) OrchestratorService {
+	opts := DefaultOptions()
+	if len(optionOverrides) > 0 {
+		opts = mergeOptions(opts, optionOverrides[0])
 	}
+
+	svc := &orchestratorService{
+		repo:                   repo,
+		scoring:                scoring,
+		logger:                 logger,
+		containerMgr:           containerMgr,
+		eventProducer:          eventProducer,
+		storage:                storage,
+		opts:                   opts,
+		cancelFns:              make(map[string]context.CancelFunc),
+		deployments:            make(map[string]*deploymentState),
+		deploymentBySubmission: make(map[string]string),
+	}
+	svc.startIdleCleanupLoop()
+	return svc
+}
+
+type deploymentState struct {
+	DeploymentID string
+	SubmissionID string
+	ContainerID  string
+	ServiceURL   string
+	LastUsed     time.Time
 }
 
 func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID string) (*domain.Deployment, error) {
@@ -70,7 +116,12 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 		return nil, fmt.Errorf("failed to get storage path: %w", err)
 	}
 
-	tempZipPath := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-%s.zip", submissionID))
+	tempFile, err := os.CreateTemp("", fmt.Sprintf("deploy-%s-*.zip", shortID(submissionID)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary archive path: %w", err)
+	}
+	tempZipPath := tempFile.Name()
+	tempFile.Close()
 	defer os.Remove(tempZipPath)
 
 	if err := s.storage.DownloadArchive(ctx, storagePath, tempZipPath); err != nil {
@@ -82,17 +133,33 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 		return nil, fmt.Errorf("failed to convert zip to tar: %w", err)
 	}
 
-	imageName := fmt.Sprintf("submission-%s:latest", submissionID[:8])
-
-	s.logger.Info("building docker image", slog.String("submission_id", submissionID), slog.String("image", imageName))
-	if err := s.containerMgr.BuildImage(ctx, tarBuf, imageName); err != nil {
-		return nil, fmt.Errorf("failed to build image: %w", err)
-	}
+	imageName := fmt.Sprintf("submission-%s:%d", shortID(submissionID), time.Now().UnixNano())
 
 	// For now we assume a standard set of ports and limits as defined by the platform.
 	// In the real system, these would be read from the contract or validation event.
 	ports := []string{"8080"}
-	limits := domain.ResourceLimits{CPUMilli: 1000, MemoryMB: 512}
+	limits := domain.ResourceLimits{CPUMilli: 1000, MemoryMB: 512, TimeoutSeconds: int64(s.opts.DeployTimeout.Seconds())}
+
+	if s.containerMgr == nil {
+		s.logger.Warn("docker manager unavailable, skipping image build and creating simulated deployment",
+			slog.String("submission_id", submissionID),
+		)
+		s.recordSubmissionLog(context.Background(), submissionID, "build", "warn", "Docker manager unavailable; deployment will be simulated.", map[string]string{
+			"image": imageName,
+		})
+		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
+	}
+
+	s.logger.Info("building docker image", slog.String("submission_id", submissionID), slog.String("image", imageName))
+	buildCtx, buildCancel := context.WithTimeout(ctx, s.opts.BuildTimeout)
+	defer buildCancel()
+
+	buildResult, err := s.containerMgr.BuildImage(buildCtx, tarBuf, imageName)
+	if err != nil {
+		s.recordBuildLog(submissionID, "error", buildResult, err)
+		return nil, fmt.Errorf("failed to build image: %w", err)
+	}
+	s.recordBuildLog(submissionID, "info", buildResult, nil)
 
 	return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
 }
@@ -111,7 +178,7 @@ func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID
 		SubmissionID:   submissionID,
 		ContainerImage: containerImage,
 		ExposedPorts:   ports,
-		ServiceURL:     fmt.Sprintf("http://submission-%s:8080", submissionID[:8]),
+		ServiceURL:     fmt.Sprintf("pending://submission-%s", shortID(submissionID)),
 		Status:         domain.DeploymentStatusPending,
 		ResourceLimits: limits,
 		CreatedAt:      now,
@@ -134,14 +201,14 @@ func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID
 }
 
 func (s *orchestratorService) executeDeployment(deploymentID, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), s.opts.DeployTimeout)
 	defer cancel()
 
 	s.logger.Info("starting deployment", slog.String("deployment_id", deploymentID))
 
 	if s.containerMgr == nil {
-		serviceURL := fmt.Sprintf("http://submission-%s:8080", submissionID[:8])
-		containerID := fmt.Sprintf("simulated-%s", deploymentID[:8])
+		serviceURL := fmt.Sprintf("http://submission-%s:8080", shortID(submissionID))
+		containerID := fmt.Sprintf("simulated-%s", shortID(deploymentID))
 		s.logger.Warn("docker manager unavailable, marking deployment as simulated",
 			slog.String("deployment_id", deploymentID),
 		)
@@ -149,27 +216,73 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		return
 	}
 
-	opts := container.CreateOptions{
-		ImageName:      containerImage,
-		ContainerName:  fmt.Sprintf("submission-%s", deploymentID[:8]),
-		ExposedPorts:   ports,
-		CPUMilli:       limits.CPUMilli,
-		MemoryMB:       limits.MemoryMB,
-		PidsLimit:      100,
-		TimeoutSeconds: 60,
-		NetworkMode:    "none",     // Isolated network per sandbox requirements
-		Cmd:            []string{}, // Allow the image's ENTRYPOINT to run
-		RunAsUser:      "65532:65532",
-	}
+	attempts := s.opts.RestartAttempts + 1
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		opts := container.CreateOptions{
+			ImageName:      containerImage,
+			ContainerName:  fmt.Sprintf("submission-%s-%d", shortID(deploymentID), attempt),
+			ExposedPorts:   ports,
+			CPUMilli:       limits.CPUMilli,
+			MemoryMB:       limits.MemoryMB,
+			PidsLimit:      100,
+			TimeoutSeconds: int64(s.opts.DeployTimeout.Seconds()),
+			NetworkMode:    s.opts.SandboxNetworkMode,
+			HostBindIP:     s.opts.SandboxBindHost,
+			ServiceHost:    s.opts.SandboxServiceHost,
+			Cmd:            []string{}, // Allow the image's ENTRYPOINT to run.
+			RunAsUser:      "65532:65532",
+		}
 
-	containerID, serviceURL, err := s.containerMgr.CreateAndStart(ctx, opts)
-	if err != nil {
-		s.logger.Error("failed to create container", slog.String("error", err.Error()))
-		s.repo.UpdateDeploymentStatus(ctx, deploymentID, domain.DeploymentStatusFailed, "", "", err.Error())
+		containerID, serviceURL, err := s.containerMgr.CreateAndStart(ctx, opts)
+		if err != nil {
+			lastErr = err
+			s.logger.Warn("failed to create container",
+				slog.String("deployment_id", deploymentID),
+				slog.Int("attempt", attempt),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+
+		healthURL := joinURL(serviceURL, "health")
+		if err := s.containerMgr.WaitForHealthy(ctx, containerID, healthURL, s.opts.HealthProbeTimeout); err != nil {
+			lastErr = err
+			s.logger.Warn("container failed readiness check",
+				slog.String("deployment_id", deploymentID),
+				slog.String("container_id", containerID),
+				slog.Int("attempt", attempt),
+				slog.String("error", err.Error()),
+			)
+			s.cleanupContainer(containerID, "failed readiness check")
+			continue
+		}
+
+		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+		s.recordSubmissionLog(context.Background(), submissionID, "runtime", "info", "Container started and passed readiness check.", map[string]string{
+			"deployment_id": deploymentID,
+			"container_id":  containerID,
+			"service_url":   serviceURL,
+		})
 		return
 	}
 
-	s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+	errMsg := "deployment failed"
+	if lastErr != nil {
+		errMsg = lastErr.Error()
+	}
+	s.logger.Error("deployment failed after restart attempts",
+		slog.String("deployment_id", deploymentID),
+		slog.Int("attempts", attempts),
+		slog.String("error", errMsg),
+	)
+	if err := s.repo.UpdateDeploymentStatus(ctx, deploymentID, domain.DeploymentStatusFailed, "", "", errMsg); err != nil {
+		s.logger.Error("failed to mark deployment failed", slog.String("deployment_id", deploymentID), slog.String("error", err.Error()))
+	}
+	s.recordSubmissionLog(context.Background(), submissionID, "runtime", "error", "Container failed to start or pass readiness checks.", map[string]string{
+		"deployment_id": deploymentID,
+		"error":         errMsg,
+	})
 }
 
 func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymentID, submissionID, serviceURL, containerID string) {
@@ -181,6 +294,7 @@ func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymen
 		)
 		return
 	}
+	s.trackDeployment(deploymentID, submissionID, serviceURL, containerID)
 
 	if s.eventProducer != nil {
 		eventCtx, eventCancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -209,6 +323,10 @@ func (s *orchestratorService) StartBenchmark(ctx context.Context, submissionID, 
 	if deploymentID == "" {
 		return nil, fmt.Errorf("%w: deployment_id is required", domain.ErrInvalidInput)
 	}
+	if err := s.ensureDeploymentReady(ctx, submissionID, deploymentID); err != nil {
+		return nil, err
+	}
+	s.touchDeployment(deploymentID)
 
 	now := time.Now()
 	benchmark := &domain.Benchmark{
@@ -266,7 +384,12 @@ func (s *orchestratorService) simulateBenchmark(ctx context.Context, benchmarkID
 		s.mu.Unlock()
 	}()
 
-	time.Sleep(1 * time.Second)
+	select {
+	case <-ctx.Done():
+		s.stopBenchmarkRun(benchmarkID, 0)
+		return
+	case <-time.After(1 * time.Second):
+	}
 
 	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -290,7 +413,7 @@ func (s *orchestratorService) simulateBenchmark(ctx context.Context, benchmarkID
 		select {
 		case <-ctx.Done():
 			// Benchmark was stopped externally.
-			s.finishBenchmark(benchmarkID, elapsed, lastMetrics)
+			s.stopBenchmarkRun(benchmarkID, elapsed)
 			return
 		case <-ticker.C:
 			elapsed++
@@ -376,19 +499,7 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 		slog.String("benchmark_id", benchmarkID),
 		slog.Float64("composite_score", score),
 	)
-
-	// Sandbox Auto Cleanup: Stop and remove the container
-	if s.containerMgr != nil {
-		deployment, err := s.repo.GetDeploymentByID(ctx, benchmark.DeploymentID)
-		if err == nil && deployment.ContainerID != "" && !strings.HasPrefix(deployment.ContainerID, "simulated") {
-			go func(cID string) {
-				cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cleanCancel()
-				s.containerMgr.Stop(cleanCtx, cID)
-				s.containerMgr.Remove(cleanCtx, cID)
-			}(deployment.ContainerID)
-		}
-	}
+	s.touchDeployment(benchmark.DeploymentID)
 }
 
 func (s *orchestratorService) runValidationEngine(benchmarkID string) float64 {
@@ -456,6 +567,279 @@ func (s *orchestratorService) GetLeaderboard(ctx context.Context, limit int) ([]
 		limit = 50
 	}
 	return s.repo.GetLeaderboard(ctx, limit)
+}
+
+func (s *orchestratorService) ensureDeploymentReady(ctx context.Context, submissionID, deploymentID string) error {
+	deployment, err := s.repo.GetDeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+	if deployment.SubmissionID != submissionID {
+		return fmt.Errorf("%w: deployment does not belong to submission", domain.ErrInvalidInput)
+	}
+	if deployment.Status != domain.DeploymentStatusDeployed {
+		return fmt.Errorf("%w: deployment is %s", domain.ErrInvalidInput, deployment.Status)
+	}
+	if s.containerMgr == nil || deployment.ContainerID == "" || strings.HasPrefix(deployment.ContainerID, "simulated") {
+		return nil
+	}
+
+	running, err := s.containerMgr.IsRunning(ctx, deployment.ContainerID)
+	if err != nil {
+		return fmt.Errorf("%w: failed to inspect deployment container: %v", domain.ErrInternal, err)
+	}
+	if !running {
+		return fmt.Errorf("%w: deployment container is not running", domain.ErrInvalidInput)
+	}
+
+	probeTimeout := minDuration(s.opts.HealthProbeTimeout, 3*time.Second)
+	if probeTimeout <= 0 {
+		probeTimeout = 3 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	if err := s.containerMgr.WaitForHealthy(probeCtx, deployment.ContainerID, joinURL(deployment.ServiceURL, "health"), probeTimeout); err != nil {
+		return fmt.Errorf("%w: deployment readiness check failed: %v", domain.ErrInvalidInput, err)
+	}
+	return nil
+}
+
+func (s *orchestratorService) recordBuildLog(submissionID, level string, result container.BuildResult, buildErr error) {
+	message := strings.TrimSpace(result.Logs)
+	if message == "" {
+		if buildErr != nil {
+			message = buildErr.Error()
+		} else {
+			message = "Docker image build completed."
+		}
+	}
+
+	metadata := map[string]string{
+		"truncated": fmt.Sprintf("%t", result.Truncated),
+	}
+	if buildErr != nil {
+		metadata["error"] = buildErr.Error()
+	}
+	s.recordSubmissionLog(context.Background(), submissionID, "build", level, message, metadata)
+}
+
+func (s *orchestratorService) recordSubmissionLog(parent context.Context, submissionID, logType, level, message string, metadata map[string]string) {
+	if submissionID == "" || s.repo == nil {
+		return
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+
+	log := &domain.SubmissionLog{
+		ID:           uuid.New().String(),
+		SubmissionID: submissionID,
+		LogType:      logType,
+		Message:      truncateMessage(message, 256*1024),
+		Level:        level,
+		Metadata:     metadata,
+		CreatedAt:    time.Now().UTC(),
+	}
+	if err := s.repo.CreateSubmissionLog(ctx, log); err != nil {
+		s.logger.Warn("failed to persist submission log",
+			slog.String("submission_id", submissionID),
+			slog.String("log_type", logType),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (s *orchestratorService) trackDeployment(deploymentID, submissionID, serviceURL, containerID string) {
+	if containerID == "" || strings.HasPrefix(containerID, "simulated") {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.deployments[deploymentID] = &deploymentState{
+		DeploymentID: deploymentID,
+		SubmissionID: submissionID,
+		ContainerID:  containerID,
+		ServiceURL:   serviceURL,
+		LastUsed:     time.Now(),
+	}
+	s.deploymentBySubmission[submissionID] = deploymentID
+}
+
+func (s *orchestratorService) touchDeployment(deploymentID string) {
+	if deploymentID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state, ok := s.deployments[deploymentID]; ok {
+		state.LastUsed = time.Now()
+	}
+}
+
+func (s *orchestratorService) startIdleCleanupLoop() {
+	if s.containerMgr == nil || s.opts.IdleContainerTTL <= 0 {
+		return
+	}
+
+	interval := s.opts.IdleContainerTTL / 2
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
+	}
+	if interval > time.Minute {
+		interval = time.Minute
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.cleanupIdleDeployments(time.Now())
+		}
+	}()
+}
+
+func (s *orchestratorService) cleanupIdleDeployments(now time.Time) {
+	var expired []deploymentState
+
+	s.mu.Lock()
+	for deploymentID, state := range s.deployments {
+		if now.Sub(state.LastUsed) < s.opts.IdleContainerTTL {
+			continue
+		}
+		expired = append(expired, *state)
+		delete(s.deployments, deploymentID)
+		if s.deploymentBySubmission[state.SubmissionID] == deploymentID {
+			delete(s.deploymentBySubmission, state.SubmissionID)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, state := range expired {
+		s.logger.Info("cleaning up idle deployment",
+			slog.String("deployment_id", state.DeploymentID),
+			slog.String("container_id", state.ContainerID),
+		)
+		s.cleanupContainer(state.ContainerID, "idle timeout")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := s.repo.UpdateDeploymentStatus(ctx, state.DeploymentID, domain.DeploymentStatusTerminated, state.ServiceURL, state.ContainerID, "idle timeout")
+		cancel()
+		if err != nil {
+			s.logger.Warn("failed to mark idle deployment terminated",
+				slog.String("deployment_id", state.DeploymentID),
+				slog.String("error", err.Error()),
+			)
+		}
+		s.recordSubmissionLog(context.Background(), state.SubmissionID, "runtime", "info", "Idle container cleaned up.", map[string]string{
+			"deployment_id": state.DeploymentID,
+			"container_id":  state.ContainerID,
+		})
+	}
+}
+
+func (s *orchestratorService) cleanupContainer(containerID, reason string) {
+	if s.containerMgr == nil || containerID == "" || strings.HasPrefix(containerID, "simulated") {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := s.containerMgr.Stop(ctx, containerID); err != nil {
+		s.logger.Debug("container stop during cleanup failed",
+			slog.String("container_id", containerID),
+			slog.String("reason", reason),
+			slog.String("error", err.Error()),
+		)
+	}
+	if err := s.containerMgr.Remove(ctx, containerID); err != nil {
+		s.logger.Warn("container removal during cleanup failed",
+			slog.String("container_id", containerID),
+			slog.String("reason", reason),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (s *orchestratorService) stopBenchmarkRun(benchmarkID string, elapsed int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := s.repo.UpdateBenchmarkStatus(ctx, benchmarkID, domain.BenchmarkStatusStopped, elapsed, "stopped by request"); err != nil {
+		s.logger.Error("failed to mark benchmark stopped",
+			slog.String("benchmark_id", benchmarkID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if benchmark, err := s.repo.GetBenchmarkByID(ctx, benchmarkID); err == nil {
+		s.touchDeployment(benchmark.DeploymentID)
+	}
+}
+
+func mergeOptions(base, override Options) Options {
+	if override.BuildTimeout > 0 {
+		base.BuildTimeout = override.BuildTimeout
+	}
+	if override.DeployTimeout > 0 {
+		base.DeployTimeout = override.DeployTimeout
+	}
+	if override.HealthProbeTimeout > 0 {
+		base.HealthProbeTimeout = override.HealthProbeTimeout
+	}
+	if override.IdleContainerTTL >= 0 {
+		base.IdleContainerTTL = override.IdleContainerTTL
+	}
+	if override.RestartAttempts >= 0 {
+		base.RestartAttempts = override.RestartAttempts
+	}
+	if override.SandboxNetworkMode != "" {
+		base.SandboxNetworkMode = override.SandboxNetworkMode
+	}
+	if override.SandboxBindHost != "" {
+		base.SandboxBindHost = override.SandboxBindHost
+	}
+	if override.SandboxServiceHost != "" {
+		base.SandboxServiceHost = override.SandboxServiceHost
+	}
+	return base
+}
+
+func joinURL(base, path string) string {
+	if base == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(path, "/")
+}
+
+func truncateMessage(message string, maxBytes int) string {
+	if maxBytes <= 0 || len(message) <= maxBytes {
+		return message
+	}
+	return message[:maxBytes] + "\n[truncated]"
+}
+
+func shortID(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 || a < b {
+		return a
+	}
+	return b
 }
 
 func max(a, b int32) int32 {

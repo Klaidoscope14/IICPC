@@ -61,7 +61,17 @@ func main() {
 		defer producer.Close()
 	}
 
-	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, producer, storageClient, logger)
+	orchestratorOptions := service.Options{
+		BuildTimeout:       time.Duration(cfg.Sandbox.BuildTimeoutSeconds) * time.Second,
+		DeployTimeout:      time.Duration(cfg.Sandbox.DeployTimeoutSeconds) * time.Second,
+		HealthProbeTimeout: time.Duration(cfg.Sandbox.HealthProbeTimeoutSeconds) * time.Second,
+		IdleContainerTTL:   time.Duration(cfg.Sandbox.IdleContainerTTLSeconds) * time.Second,
+		RestartAttempts:    cfg.Sandbox.RestartAttempts,
+		SandboxNetworkMode: cfg.Sandbox.NetworkMode,
+		SandboxBindHost:    cfg.Sandbox.BindHost,
+		SandboxServiceHost: cfg.Sandbox.ServiceHost,
+	}
+	orchestratorService := service.NewOrchestratorService(repo, scoring, containerMgr, producer, storageClient, logger, orchestratorOptions)
 	orchestratorHandler := handler.NewOrchestratorHandler(orchestratorService)
 
 	// Initialize Redpanda Consumer
@@ -114,7 +124,39 @@ func main() {
 	wsHandler.RegisterRoutes(router)
 
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "benchmark-orchestrator"})
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 750*time.Millisecond)
+		defer cancel()
+
+		statusCode := http.StatusOK
+		dependencies := gin.H{
+			"database": "healthy",
+			"redpanda": "disabled",
+			"docker":   "disabled",
+		}
+
+		if err := db.PingContext(ctx); err != nil {
+			statusCode = http.StatusServiceUnavailable
+			dependencies["database"] = "unhealthy"
+		}
+		if producer != nil {
+			pingCtx, pingCancel := context.WithTimeout(c.Request.Context(), 500*time.Millisecond)
+			if err := producer.Ping(pingCtx); err != nil {
+				statusCode = http.StatusServiceUnavailable
+				dependencies["redpanda"] = "unhealthy"
+			} else {
+				dependencies["redpanda"] = "healthy"
+			}
+			pingCancel()
+		}
+		if containerMgr != nil {
+			dependencies["docker"] = "configured"
+		}
+
+		c.JSON(statusCode, gin.H{
+			"status":       mapStatus(statusCode),
+			"service":      "benchmark-orchestrator",
+			"dependencies": dependencies,
+		})
 	})
 
 	srv := &http.Server{
@@ -127,4 +169,11 @@ func main() {
 
 	// Block until shutdown signal.
 	server.RunGracefully(srv, "benchmark-orchestrator")
+}
+
+func mapStatus(statusCode int) string {
+	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+		return "healthy"
+	}
+	return "unhealthy"
 }

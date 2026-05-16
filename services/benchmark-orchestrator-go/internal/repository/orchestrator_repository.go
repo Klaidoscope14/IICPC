@@ -18,6 +18,7 @@ type OrchestratorRepository interface {
 	GetDeploymentByID(ctx context.Context, id string) (*domain.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status domain.DeploymentStatus, serviceURL string, containerID string, errMsg string) error
 	GetSubmissionStoragePath(ctx context.Context, submissionID string) (string, error)
+	CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error
 
 	// Benchmarks
 	CreateBenchmark(ctx context.Context, benchmark *domain.Benchmark) error
@@ -150,6 +151,32 @@ func (r *postgresRepository) GetSubmissionStoragePath(ctx context.Context, submi
 		return "", fmt.Errorf("failed to get storage path: %w", err)
 	}
 	return path, nil
+}
+
+func (r *postgresRepository) CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error {
+	metadataJSON, err := json.Marshal(log.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal submission log metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO submission_logs (id, submission_id, log_type, message, level, metadata, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+
+	_, err = r.db.ExecContext(ctx, query,
+		log.ID,
+		log.SubmissionID,
+		log.LogType,
+		log.Message,
+		log.Level,
+		metadataJSON,
+		log.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create submission log: %w", err)
+	}
+	return nil
 }
 
 // --- Benchmarks ---
@@ -290,6 +317,9 @@ func (r *postgresRepository) ListBenchmarksBySubmission(ctx context.Context, sub
 		}
 		benchmarks = append(benchmarks, &b)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate benchmarks: %w", err)
+	}
 
 	return benchmarks, nil
 }
@@ -422,6 +452,9 @@ func (r *postgresRepository) GetLeaderboard(ctx context.Context, limit int) ([]*
 		e.Rank = rank
 		rank++
 		entries = append(entries, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate leaderboard entries: %w", err)
 	}
 
 	return entries, nil

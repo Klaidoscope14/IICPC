@@ -197,11 +197,22 @@ services:
       DB_NAME: ${POSTGRES_DB:-iicpc}
       DB_SSLMODE: disable
       REDPANDA_BROKERS: redpanda:9092
+      BUILD_TIMEOUT_SECONDS: ${BUILD_TIMEOUT_SECONDS:-300}
+      DEPLOY_TIMEOUT_SECONDS: ${DEPLOY_TIMEOUT_SECONDS:-180}
+      HEALTH_PROBE_TIMEOUT_SECONDS: ${HEALTH_PROBE_TIMEOUT_SECONDS:-30}
+      IDLE_CONTAINER_TTL_SECONDS: ${IDLE_CONTAINER_TTL_SECONDS:-1800}
+      RESTART_ATTEMPTS: ${RESTART_ATTEMPTS:-1}
+      SANDBOX_NETWORK_MODE: ${SANDBOX_NETWORK_MODE:-bridge}
+      SANDBOX_BIND_HOST: ${SANDBOX_BIND_HOST:-0.0.0.0}
+      SANDBOX_SERVICE_HOST: ${SANDBOX_SERVICE_HOST:-host.docker.internal}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${ORCHESTRATOR_PORT:-8081}:8081"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - submission-storage:/data/iicpc-storage:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null"]
       interval: 5s

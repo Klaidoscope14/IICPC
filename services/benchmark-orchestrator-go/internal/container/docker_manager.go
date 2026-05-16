@@ -1,10 +1,13 @@
 package container
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -19,7 +22,7 @@ import (
 // Implementations can target Docker, Kubernetes, or any other container runtime.
 type Manager interface {
 	// BuildImage builds a container image from a tar archive.
-	BuildImage(ctx context.Context, buildContext io.Reader, imageName string) error
+	BuildImage(ctx context.Context, buildContext io.Reader, imageName string) (BuildResult, error)
 
 	// PullImage pulls a container image from a registry.
 	PullImage(ctx context.Context, imageName string) error
@@ -40,6 +43,13 @@ type Manager interface {
 	WaitForHealthy(ctx context.Context, containerID string, healthURL string, timeout time.Duration) error
 }
 
+// BuildResult contains bounded output collected from the Docker build stream.
+type BuildResult struct {
+	Logs      string
+	Truncated bool
+	Error     string
+}
+
 // CreateOptions holds all parameters needed to create and start a container.
 type CreateOptions struct {
 	ImageName      string
@@ -50,6 +60,8 @@ type CreateOptions struct {
 	PidsLimit      int64
 	TimeoutSeconds int64
 	NetworkMode    string // e.g., "bridge" or a custom network name
+	HostBindIP     string // Host interface for published ports.
+	ServiceHost    string // Hostname clients should use to reach published ports.
 	Cmd            []string
 	RunAsUser      string
 }
@@ -73,7 +85,7 @@ func NewDockerManager(logger *slog.Logger) (*DockerManager, error) {
 	}, nil
 }
 
-func (m *DockerManager) BuildImage(ctx context.Context, buildContext io.Reader, imageName string) error {
+func (m *DockerManager) BuildImage(ctx context.Context, buildContext io.Reader, imageName string) (BuildResult, error) {
 	m.logger.Info("building container image", slog.String("image", imageName))
 
 	resp, err := m.client.ImageBuild(ctx, buildContext, types.ImageBuildOptions{
@@ -83,18 +95,20 @@ func (m *DockerManager) BuildImage(ctx context.Context, buildContext io.Reader, 
 		NoCache:    false,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to build image: %w", err)
+		return BuildResult{}, fmt.Errorf("failed to build image: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Drain the build output — this also blocks until the build completes.
-	_, err = io.Copy(io.Discard, resp.Body)
+	result, err := readBuildStream(resp.Body)
 	if err != nil {
-		return fmt.Errorf("error reading build output: %w", err)
+		return result, fmt.Errorf("error reading build output: %w", err)
+	}
+	if result.Error != "" {
+		return result, fmt.Errorf("docker build failed: %s", result.Error)
 	}
 
 	m.logger.Info("image built successfully", slog.String("image", imageName))
-	return nil
+	return result, nil
 }
 
 func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) (string, string, error) {
@@ -102,6 +116,19 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 		slog.String("image", opts.ImageName),
 		slog.String("name", opts.ContainerName),
 	)
+
+	hostBindIP := strings.TrimSpace(opts.HostBindIP)
+	if hostBindIP == "" {
+		hostBindIP = "127.0.0.1"
+	}
+	serviceHost := strings.TrimSpace(opts.ServiceHost)
+	if serviceHost == "" {
+		serviceHost = "localhost"
+	}
+	networkMode := strings.TrimSpace(opts.NetworkMode)
+	if networkMode == "" {
+		networkMode = "bridge"
+	}
 
 	// Parse port mappings.
 	exposedPorts := nat.PortSet{}
@@ -112,7 +139,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 		port := nat.Port(p + "/tcp")
 		exposedPorts[port] = struct{}{}
 		// Let Docker assign a random host port.
-		portBindings[port] = []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: ""}}
+		portBindings[port] = []nat.PortBinding{{HostIP: hostBindIP, HostPort: ""}}
 	}
 
 	// Resource limits and Security Options for Sandboxing.
@@ -147,7 +174,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 	hostConfig := &container.HostConfig{
 		PortBindings:   portBindings,
 		Resources:      resources,
-		NetworkMode:    container.NetworkMode(opts.NetworkMode),
+		NetworkMode:    container.NetworkMode(networkMode),
 		RestartPolicy:  container.RestartPolicy{Name: "no"},
 		ReadonlyRootfs: true, // Read-only filesystem
 		SecurityOpt:    []string{"no-new-privileges"},
@@ -192,11 +219,11 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 
 	serviceURL := ""
 	if hostPort != "" {
-		serviceURL = fmt.Sprintf("http://localhost:%s", hostPort)
+		serviceURL = fmt.Sprintf("http://%s:%s", serviceHost, hostPort)
 	}
 
 	m.logger.Info("container started",
-		slog.String("container_id", resp.ID[:12]),
+		slog.String("container_id", shortID(resp.ID, 12)),
 		slog.String("service_url", serviceURL),
 	)
 
@@ -208,14 +235,14 @@ func boolPtr(value bool) *bool {
 }
 
 func (m *DockerManager) Stop(ctx context.Context, containerID string) error {
-	m.logger.Info("stopping container", slog.String("container_id", containerID[:12]))
+	m.logger.Info("stopping container", slog.String("container_id", shortID(containerID, 12)))
 
 	timeout := 10
 	return m.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
 func (m *DockerManager) Remove(ctx context.Context, containerID string) error {
-	m.logger.Info("removing container", slog.String("container_id", containerID[:12]))
+	m.logger.Info("removing container", slog.String("container_id", shortID(containerID, 12)))
 
 	return m.client.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{
 		Force:         true,
@@ -233,17 +260,18 @@ func (m *DockerManager) IsRunning(ctx context.Context, containerID string) (bool
 
 func (m *DockerManager) WaitForHealthy(ctx context.Context, containerID string, healthURL string, timeout time.Duration) error {
 	m.logger.Info("waiting for container health",
-		slog.String("container_id", containerID[:12]),
+		slog.String("container_id", shortID(containerID, 12)),
 		slog.String("health_url", healthURL),
 	)
 
-	deadline := time.After(timeout)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-deadline:
+		case <-deadline.C:
 			return fmt.Errorf("health check timed out after %v", timeout)
 		case <-ctx.Done():
 			return ctx.Err()
@@ -254,16 +282,37 @@ func (m *DockerManager) WaitForHealthy(ctx context.Context, containerID string, 
 				return fmt.Errorf("container exited before becoming healthy")
 			}
 
-			// Try to pull the image list as a simple connectivity check.
-			// In production, this would be an HTTP GET to the healthURL.
-			if healthURL != "" {
-				// The actual health check would use net/http here.
-				// For now, we just verify the container is running.
-				m.logger.Debug("container running, assuming healthy",
-					slog.String("container_id", containerID[:12]),
+			if healthURL == "" {
+				return fmt.Errorf("health URL is empty")
+			}
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				return fmt.Errorf("invalid health URL %q: %w", healthURL, err)
+			}
+
+			resp, err := healthHTTPClient.Do(req)
+			if err != nil {
+				m.logger.Debug("container health probe failed",
+					slog.String("container_id", shortID(containerID, 12)),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+				m.logger.Info("container health probe passed",
+					slog.String("container_id", shortID(containerID, 12)),
+					slog.Int("status", resp.StatusCode),
 				)
 				return nil
 			}
+			m.logger.Debug("container health probe returned non-success",
+				slog.String("container_id", shortID(containerID, 12)),
+				slog.Int("status", resp.StatusCode),
+			)
 		}
 	}
 }
@@ -283,4 +332,90 @@ func (m *DockerManager) PullImage(ctx context.Context, imageName string) error {
 
 	_, err = io.Copy(io.Discard, reader)
 	return err
+}
+
+const maxBuildLogBytes = 512 * 1024
+
+var healthHTTPClient = &http.Client{Timeout: 1 * time.Second}
+
+type buildStreamMessage struct {
+	Stream      string `json:"stream"`
+	Status      string `json:"status"`
+	Error       string `json:"error"`
+	ErrorDetail *struct {
+		Message string `json:"message"`
+	} `json:"errorDetail"`
+}
+
+func readBuildStream(r io.Reader) (BuildResult, error) {
+	var out limitedBuffer
+	out.limit = maxBuildLogBytes
+	var buildErr string
+
+	decoder := json.NewDecoder(r)
+	for {
+		var msg buildStreamMessage
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return BuildResult{Logs: out.String(), Truncated: out.truncated}, err
+		}
+
+		switch {
+		case msg.Stream != "":
+			out.WriteString(msg.Stream)
+		case msg.Error != "":
+			buildErr = msg.Error
+			out.WriteString(msg.Error)
+			out.WriteString("\n")
+		case msg.Status != "":
+			out.WriteString(msg.Status)
+			out.WriteString("\n")
+		}
+		if msg.ErrorDetail != nil && msg.ErrorDetail.Message != "" {
+			buildErr = msg.ErrorDetail.Message
+		}
+	}
+
+	return BuildResult{Logs: out.String(), Truncated: out.truncated, Error: buildErr}, nil
+}
+
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return len(p), nil
+	}
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *limitedBuffer) WriteString(value string) {
+	_, _ = b.Write([]byte(value))
+}
+
+func (b *limitedBuffer) String() string {
+	return b.buf.String()
+}
+
+func shortID(value string, maxLen int) string {
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
 }

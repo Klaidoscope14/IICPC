@@ -56,8 +56,8 @@ type DeploySubmissionResponse struct {
 }
 
 type StartBenchmarkRequest struct {
-	SubmissionID string                `json:"submission_id" binding:"required"`
-	DeploymentID string                `json:"deployment_id" binding:"required"`
+	SubmissionID string                 `json:"submission_id" binding:"required"`
+	DeploymentID string                 `json:"deployment_id" binding:"required"`
 	Config       domain.BenchmarkConfig `json:"config"`
 }
 
@@ -85,6 +85,9 @@ func (h *OrchestratorHandler) DeploySubmission(c *gin.Context) {
 	}
 	if req.ResourceLimits.TimeoutSeconds == 0 {
 		req.ResourceLimits.TimeoutSeconds = 300
+	}
+	if len(req.ExposedPorts) == 0 {
+		req.ExposedPorts = []string{"8080"}
 	}
 
 	deployment, err := h.service.DeploySubmission(c.Request.Context(), req.SubmissionID, req.ContainerImage, req.ExposedPorts, req.ResourceLimits)

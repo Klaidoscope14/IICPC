@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +12,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Redpanda RedpandaConfig
+	Sandbox  SandboxConfig
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -32,6 +34,18 @@ type RedpandaConfig struct {
 	Brokers []string
 }
 
+// SandboxConfig controls build/deploy execution for submitted engines.
+type SandboxConfig struct {
+	BuildTimeoutSeconds       int
+	DeployTimeoutSeconds      int
+	HealthProbeTimeoutSeconds int
+	IdleContainerTTLSeconds   int
+	RestartAttempts           int
+	NetworkMode               string
+	BindHost                  string
+	ServiceHost               string
+}
+
 // Load reads configuration from environment variables with sensible defaults.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -49,6 +63,16 @@ func Load() (*Config, error) {
 		Redpanda: RedpandaConfig{
 			Brokers: strings.Split(getEnv("REDPANDA_BROKERS", "localhost:19092"), ","),
 		},
+		Sandbox: SandboxConfig{
+			BuildTimeoutSeconds:       getEnvInt("BUILD_TIMEOUT_SECONDS", 300),
+			DeployTimeoutSeconds:      getEnvInt("DEPLOY_TIMEOUT_SECONDS", 180),
+			HealthProbeTimeoutSeconds: getEnvInt("HEALTH_PROBE_TIMEOUT_SECONDS", 30),
+			IdleContainerTTLSeconds:   getEnvInt("IDLE_CONTAINER_TTL_SECONDS", 1800),
+			RestartAttempts:           getEnvInt("RESTART_ATTEMPTS", 1),
+			NetworkMode:               getEnv("SANDBOX_NETWORK_MODE", "bridge"),
+			BindHost:                  getEnv("SANDBOX_BIND_HOST", "127.0.0.1"),
+			ServiceHost:               getEnv("SANDBOX_SERVICE_HOST", "localhost"),
+		},
 	}
 
 	return cfg, nil
@@ -59,6 +83,18 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return defaultValue
+	}
+	return parsed
 }
 
 // DSN returns the PostgreSQL connection string.
