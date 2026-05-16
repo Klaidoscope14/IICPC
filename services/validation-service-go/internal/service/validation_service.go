@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	contractvalidation "github.com/iicpc/pkg/contracts/validation"
@@ -101,11 +102,6 @@ func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID
 		valResult.Warnings = append(valResult.Warnings, check.Warnings...)
 	}
 
-	if err := s.repo.SaveResult(ctx, valResult); err != nil {
-		slog.Error("Failed to save validation result", "error", err, "submission_id", submissionID)
-		return err
-	}
-
 	// 7. Publish Event
 	event := events.ValidationCompletedEvent{
 		SubmissionID: submissionID,
@@ -119,9 +115,48 @@ func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID
 		ValidatedAt:  now,
 	}
 
-	if err := s.producer.PublishValidationCompleted(ctx, event); err != nil {
-		slog.Error("Failed to publish validation event", "error", err, "submission_id", submissionID)
-		// We don't fail the transaction here since the DB is updated, but it might need a retry mechanism later.
+	errChan := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.repo.SaveResult(ctx, valResult); err != nil {
+			slog.Error("Failed to save validation result", "error", err, "submission_id", submissionID)
+			errChan <- err
+			return
+		}
+
+		submissionStatus := "validated"
+		if report.Status == domain.ValidationFailed {
+			submissionStatus = "validation_failed"
+		}
+		if err := s.repo.UpdateSubmissionStatus(ctx, submissionID, submissionStatus); err != nil {
+			slog.Error("Failed to sync submission status", "error", err, "submission_id", submissionID)
+			errChan <- err
+			return
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.producer.PublishValidationCompleted(pubCtx, event); err != nil {
+			slog.Error("Failed to publish validation event", "error", err, "submission_id", submissionID)
+			errChan <- err
+		}
+	}()
+
+	wg.Wait()
+	close(errChan)
+
+	// Return the first error if any
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 
 	slog.Info("Validation completed", "submission_id", submissionID, "status", report.Status, "errors", report.TotalErrors)
@@ -161,11 +196,6 @@ func (s *ValidationService) failValidation(ctx context.Context, submissionID, co
 		ValidatedAt:  &now,
 	}
 
-	if err := s.repo.SaveResult(ctx, valResult); err != nil {
-		slog.Error("Failed to save failed validation result", "error", err)
-		return err
-	}
-
 	// Publish failure event
 	event := events.ValidationCompletedEvent{
 		SubmissionID: submissionID,
@@ -177,7 +207,44 @@ func (s *ValidationService) failValidation(ctx context.Context, submissionID, co
 		Errors:       toContractFindings(report.CheckResults["pre_flight"].Errors),
 		ValidatedAt:  now,
 	}
-	_ = s.producer.PublishValidationCompleted(ctx, event)
+
+	errChan := make(chan error, 2)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.repo.SaveResult(ctx, valResult); err != nil {
+			slog.Error("Failed to save failed validation result", "error", err)
+			errChan <- err
+			return
+		}
+
+		if err := s.repo.UpdateSubmissionStatus(ctx, submissionID, "validation_failed"); err != nil {
+			slog.Error("Failed to sync submission status on pre-flight failure", "error", err, "submission_id", submissionID)
+			errChan <- err
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.producer.PublishValidationCompleted(pubCtx, event); err != nil {
+			slog.Error("Failed to publish validation event", "error", err, "submission_id", submissionID)
+			errChan <- err
+		}
+	}()
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
 
 	slog.Error("Validation failed during pre-flight", "submission_id", submissionID, "code", code, "message", message)
 	return fmt.Errorf("validation failed: %s", message)

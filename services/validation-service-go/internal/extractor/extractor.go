@@ -7,9 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/iicpc/validation-service-go/internal/domain"
 )
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 32*1024)
+		return &buf
+	},
+}
 
 // Extractor handles secure ZIP extraction with safety guards.
 type Extractor struct {
@@ -128,7 +136,11 @@ func (e *Extractor) extractFile(file *zip.File, destDir string, result *ExtractR
 	remaining := e.maxBytes - result.TotalSize
 	limitedReader := io.LimitReader(src, remaining+1) // +1 to detect overflow
 
-	written, err := io.Copy(dst, limitedReader)
+	bufPtr := bufferPool.Get().(*[]byte)
+	defer bufferPool.Put(bufPtr)
+	buf := *bufPtr
+
+	written, err := io.CopyBuffer(dst, limitedReader, buf)
 	if err != nil {
 		return fmt.Errorf("%w: failed to write '%s': %v", domain.ErrExtractionFailed, cleanName, err)
 	}

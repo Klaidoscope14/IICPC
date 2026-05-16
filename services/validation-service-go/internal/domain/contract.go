@@ -123,21 +123,6 @@ var DefaultContract = SubmissionContract{
 	},
 	MaxExtractedBytes: 500 * 1024 * 1024, // 500 MB
 	MaxFileCount:      1000,
-	// Common server-socket patterns in C++ that indicate the submission
-	// can accept network connections (required for bot fleet benchmarking).
-	EndpointPatterns: []string{
-		"bind",
-		"listen",
-		"accept",
-		"httplib",
-		"boost::asio",
-		"crow::",
-		"pistache",
-		"restbed",
-		"cpprestsdk",
-		"grpc::",
-		"uWebSockets",
-	},
 }
 
 // SubmissionContract holds all validation rules.
@@ -152,7 +137,6 @@ type SubmissionContract struct {
 	RuntimeAPI             RuntimeAPIContract     `json:"runtime_api"`
 	MaxExtractedBytes      int64                  `json:"max_extracted_bytes"`
 	MaxFileCount           int                    `json:"max_file_count"`
-	EndpointPatterns       []string               `json:"endpoint_patterns"`
 }
 
 // DockerfileRequirements defines what must be present in the Dockerfile.

@@ -167,3 +167,8 @@ func (p *Producer) buildRecord(topic string, key string, value interface{}) (*kg
 func (p *Producer) Close() {
 	p.client.Close()
 }
+
+// Ping checks the connection to the Kafka brokers.
+func (p *Producer) Ping(ctx context.Context) error {
+	return p.client.Ping(ctx)
+}

@@ -37,42 +37,83 @@ func (p *Pipeline) Run(submissionID string, rootDir string) *domain.ValidationRe
 		{name: extVal.Name(), run: extVal.ValidateContext},
 	})
 
-	// If core structure fails, short-circuit to avoid cascading failures
 	if !report.CheckResults[folderVal.Name()].Passed {
 		p.finalizeReport(report, workspace, start)
 		return report
 	}
 
-	// 2. Dockerfile parsing
+	// 2. Concurrent Stage: Dockerfile, Config, Schema, Language
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
 	dockerVal := NewDockerfileValidator(p.contract)
-	report.CheckResults[dockerVal.Name()] = dockerVal.ValidateContext(workspace)
-
-	if report.CheckResults[dockerVal.Name()].Passed && workspace.Docker.HasEXPOSE {
-		report.ExposedPort = workspace.Docker.Port
-	}
-
-	// If Dockerfile fails, short-circuit since port validation depends on it
-	if !report.CheckResults[dockerVal.Name()].Passed {
-		p.finalizeReport(report, workspace, start)
-		return report
-	}
-
-	// 3. Deeper static analysis
 	configVal := NewConfigValidator(p.contract)
 	schemaVal := NewSchemaValidator(p.contract)
 	portVal := NewContractPortValidator(p.contract)
-
-	p.runValidators(workspace, report, []validatorJob{
-		{name: configVal.Name(), run: configVal.ValidateContext},
-		{name: schemaVal.Name(), run: schemaVal.ValidateContext},
-		{name: portVal.Name(), run: portVal.ValidateContext},
-	})
-
-	// 4. Language Detection
 	langDetector := NewLanguageDetector()
-	langInfo := langDetector.DetectContext(workspace)
-	report.Language = langInfo.Language
-	report.Runtime = langInfo.Runtime
+
+	dockerDone := make(chan bool)
+
+	// Dockerfile
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := dockerVal.ValidateContext(workspace)
+		mu.Lock()
+		report.CheckResults[dockerVal.Name()] = res
+		if res.Passed && workspace.Docker.HasEXPOSE {
+			report.ExposedPort = workspace.Docker.Port
+		}
+		mu.Unlock()
+		dockerDone <- res.Passed
+	}()
+
+	// Port (depends on Dockerfile)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		passed := <-dockerDone
+		if !passed {
+			return // skip port validation if dockerfile failed
+		}
+		res := portVal.ValidateContext(workspace)
+		mu.Lock()
+		report.CheckResults[portVal.Name()] = res
+		mu.Unlock()
+	}()
+
+	// Config
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := configVal.ValidateContext(workspace)
+		mu.Lock()
+		report.CheckResults[configVal.Name()] = res
+		mu.Unlock()
+	}()
+
+	// Schema
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res := schemaVal.ValidateContext(workspace)
+		mu.Lock()
+		report.CheckResults[schemaVal.Name()] = res
+		mu.Unlock()
+	}()
+
+	// Language
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		langInfo := langDetector.DetectContext(workspace)
+		mu.Lock()
+		report.Language = langInfo.Language
+		report.Runtime = langInfo.Runtime
+		mu.Unlock()
+	}()
+
+	wg.Wait()
 
 	p.finalizeReport(report, workspace, start)
 	return report

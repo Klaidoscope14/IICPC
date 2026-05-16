@@ -2,6 +2,7 @@ package validator
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,19 +159,21 @@ func AnalyzeWorkspace(rootDir string, contract *domain.SubmissionContract) *Work
 		}
 
 		if isContractSourceFile(relPath) {
-			content, err := os.ReadFile(path)
-			if err == nil {
-				contentStr := string(content)
-				lowerContent := strings.ToLower(contentStr)
-				if !ctx.PortFoundInSrc && portStr != "" && strings.Contains(contentStr, portStr) {
-					ctx.PortFoundInSrc = true
-				}
-				for port, value := range portStrings {
-					if strings.Contains(contentStr, value) {
-						ctx.PortsFoundInSrc[port] = true
+			info, err := d.Info()
+			if err == nil && info.Size() <= 1024*1024 { // 1MB cap
+				content, err := os.ReadFile(path)
+				if err == nil {
+					lowerContent := bytes.ToLower(content)
+					if !ctx.PortFoundInSrc && portStr != "" && bytes.Contains(content, []byte(portStr)) {
+						ctx.PortFoundInSrc = true
 					}
+					for port, value := range portStrings {
+						if bytes.Contains(content, []byte(value)) {
+							ctx.PortsFoundInSrc[port] = true
+						}
+					}
+					ctx.collectEndpointSignals(lowerContent)
 				}
-				ctx.collectEndpointSignals(lowerContent)
 			}
 		}
 
@@ -261,13 +264,12 @@ func (ctx *WorkspaceContext) analyzeMain() {
 	}
 	ctx.Main.Exists = true
 
-	contentStr := string(content)
-	if workspaceMainFunctionRegex.MatchString(contentStr) || strings.Contains(contentStr, "int main(") {
+	if workspaceMainFunctionRegex.Match(content) || bytes.Contains(content, []byte("int main(")) {
 		ctx.Main.HasMain = true
 	}
 
-	for _, pattern := range ctx.Contract.EndpointPatterns {
-		if strings.Contains(contentStr, pattern) {
+	for _, pattern := range ctx.Contract.RuntimeAPI.EndpointPatterns {
+		if bytes.Contains(content, []byte(pattern)) {
 			ctx.Main.HasEndpoint = true
 			break
 		}
@@ -290,11 +292,9 @@ func (ctx *WorkspaceContext) checkExistence() {
 	}
 }
 
-func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent string) {
-	patterns := append([]string{}, ctx.Contract.EndpointPatterns...)
-	patterns = append(patterns, ctx.Contract.RuntimeAPI.EndpointPatterns...)
-	for _, pattern := range patterns {
-		if pattern != "" && strings.Contains(lowerContent, strings.ToLower(pattern)) {
+func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent []byte) {
+	for _, pattern := range ctx.Contract.RuntimeAPI.EndpointPatterns {
+		if pattern != "" && bytes.Contains(lowerContent, []byte(strings.ToLower(pattern))) {
 			ctx.EndpointSignals.NetworkPattern = true
 			ctx.Main.HasEndpoint = true
 			break
@@ -302,8 +302,8 @@ func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent string) {
 	}
 
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
-		lowerMethod := strings.ToLower(method)
-		if strings.Contains(lowerContent, lowerMethod) {
+		lowerMethod := []byte(strings.ToLower(method))
+		if bytes.Contains(lowerContent, lowerMethod) {
 			ctx.EndpointSignals.MethodHits[method] = true
 		}
 	}
@@ -321,12 +321,12 @@ func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent string) {
 			ctx.EndpointSignals.PathHits[endpoint.Path] = true
 		}
 		for field := range endpoint.Schema {
-			if strings.Contains(lowerContent, strings.ToLower(field)) {
+			if bytes.Contains(lowerContent, []byte(strings.ToLower(field))) {
 				ctx.EndpointSignals.SchemaFieldHits[field] = true
 			}
 		}
 	}
-	if strings.Contains(lowerContent, "content-type") || strings.Contains(lowerContent, "application/json") {
+	if bytes.Contains(lowerContent, []byte("content-type")) || bytes.Contains(lowerContent, []byte("application/json")) {
 		ctx.EndpointSignals.SchemaFieldHits["content-type"] = true
 	}
 
@@ -335,14 +335,14 @@ func (ctx *WorkspaceContext) collectEndpointSignals(lowerContent string) {
 		ctx.EndpointSignals.WebSocketPathHits[ws.Path] = true
 	}
 	for _, msgType := range ws.MessageTypes {
-		if strings.Contains(lowerContent, strings.ToLower(msgType)) {
+		if bytes.Contains(lowerContent, []byte(strings.ToLower(msgType))) {
 			ctx.EndpointSignals.WebSocketMessageHits[msgType] = true
 		}
 	}
-	if strings.Contains(lowerContent, "websocket") || strings.Contains(lowerContent, "upgrade") {
+	if bytes.Contains(lowerContent, []byte("websocket")) || bytes.Contains(lowerContent, []byte("upgrade")) {
 		ctx.EndpointSignals.WebSocketUpgrade = true
 	}
-	if strings.Contains(lowerContent, "ping") || strings.Contains(lowerContent, "pong") || strings.Contains(lowerContent, "heartbeat") {
+	if bytes.Contains(lowerContent, []byte("ping")) || bytes.Contains(lowerContent, []byte("pong")) || bytes.Contains(lowerContent, []byte("heartbeat")) {
 		ctx.EndpointSignals.PingHandler = true
 	}
 }
@@ -374,13 +374,13 @@ func parseExposePort(token string) (int, bool) {
 	return port, true
 }
 
-func endpointPathPresent(lowerContent, path string) bool {
+func endpointPathPresent(lowerContent []byte, path string) bool {
 	path = strings.ToLower(strings.TrimSpace(path))
 	if path == "" {
 		return false
 	}
 	for _, alias := range endpointPathAliases(path) {
-		if strings.Contains(lowerContent, alias) {
+		if bytes.Contains(lowerContent, []byte(alias)) {
 			return true
 		}
 	}

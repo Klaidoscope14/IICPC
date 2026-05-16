@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/iicpc/validation-service-go/internal/domain"
@@ -17,6 +18,52 @@ type postgresValidationRepository struct {
 
 func NewPostgresValidationRepository(db *sqlx.DB) service.ValidationRepository {
 	return &postgresValidationRepository{db: db}
+}
+
+type validationResultRow struct {
+	ID           string                  `db:"id"`
+	SubmissionID string                  `db:"submission_id"`
+	Status       domain.ValidationStatus `db:"status"`
+	Language     sql.NullString          `db:"language"`
+	Runtime      sql.NullString          `db:"runtime"`
+	ErrorsJSON   []byte                  `db:"errors"`
+	WarningsJSON []byte                  `db:"warnings"`
+	ReportJSON   []byte                  `db:"report"`
+	ValidatedAt  sql.NullTime            `db:"validated_at"`
+	CreatedAt    time.Time               `db:"created_at"`
+	UpdatedAt    time.Time               `db:"updated_at"`
+}
+
+func mapRowToResult(row validationResultRow) *domain.ValidationResult {
+	result := &domain.ValidationResult{
+		ID:           row.ID,
+		SubmissionID: row.SubmissionID,
+		Status:       row.Status,
+		CreatedAt:    row.CreatedAt,
+		UpdatedAt:    row.UpdatedAt,
+	}
+
+	if row.Language.Valid {
+		result.Language = row.Language.String
+	}
+	if row.Runtime.Valid {
+		result.Runtime = row.Runtime.String
+	}
+	if row.ValidatedAt.Valid {
+		result.ValidatedAt = &row.ValidatedAt.Time
+	}
+
+	if len(row.ErrorsJSON) > 0 {
+		_ = json.Unmarshal(row.ErrorsJSON, &result.Errors)
+	}
+	if len(row.WarningsJSON) > 0 {
+		_ = json.Unmarshal(row.WarningsJSON, &result.Warnings)
+	}
+	if len(row.ReportJSON) > 0 {
+		_ = json.Unmarshal(row.ReportJSON, &result.Report)
+	}
+
+	return result
 }
 
 func (r *postgresValidationRepository) SaveResult(ctx context.Context, result *domain.ValidationResult) error {
@@ -75,19 +122,7 @@ func (r *postgresValidationRepository) SaveResult(ctx context.Context, result *d
 func (r *postgresValidationRepository) GetResult(ctx context.Context, submissionID string) (*domain.ValidationResult, error) {
 	query := `SELECT * FROM validation_results WHERE submission_id = $1 ORDER BY created_at DESC LIMIT 1`
 
-	type ValidationResultRow struct {
-		ID           string                  `db:"id"`
-		SubmissionID string                  `db:"submission_id"`
-		Status       domain.ValidationStatus `db:"status"`
-		Language     sql.NullString          `db:"language"`
-		Runtime      sql.NullString          `db:"runtime"`
-		ErrorsJSON   []byte                  `db:"errors"`
-		WarningsJSON []byte                  `db:"warnings"`
-		ReportJSON   []byte                  `db:"report"`
-		ValidatedAt  sql.NullTime            `db:"validated_at"`
-	}
-
-	var row ValidationResultRow
+	var row validationResultRow
 	err := r.db.GetContext(ctx, &row, query, submissionID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -96,33 +131,53 @@ func (r *postgresValidationRepository) GetResult(ctx context.Context, submission
 		return nil, err
 	}
 
-	result := &domain.ValidationResult{
-		ID:           row.ID,
-		SubmissionID: row.SubmissionID,
-		Status:       row.Status,
+	return mapRowToResult(row), nil
+}
+
+func (r *postgresValidationRepository) ListResults(ctx context.Context, limit int, cursor string) ([]*domain.ValidationResult, string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
 	}
 
-	if row.Language.Valid {
-		result.Language = row.Language.String
-	}
-	if row.Runtime.Valid {
-		result.Runtime = row.Runtime.String
-	}
-	if row.ValidatedAt.Valid {
-		result.ValidatedAt = &row.ValidatedAt.Time
+	var query string
+	var args []interface{}
+
+	// We fetch limit + 1 to determine if there is a next page
+	fetchLimit := limit + 1
+
+	if cursor != "" {
+		cursorTime, err := time.Parse(time.RFC3339Nano, cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query = `SELECT * FROM validation_results WHERE created_at < $1 ORDER BY created_at DESC LIMIT $2`
+		args = []interface{}{cursorTime, fetchLimit}
+	} else {
+		query = `SELECT * FROM validation_results ORDER BY created_at DESC LIMIT $1`
+		args = []interface{}{fetchLimit}
 	}
 
-	if len(row.ErrorsJSON) > 0 {
-		_ = json.Unmarshal(row.ErrorsJSON, &result.Errors)
-	}
-	if len(row.WarningsJSON) > 0 {
-		_ = json.Unmarshal(row.WarningsJSON, &result.Warnings)
-	}
-	if len(row.ReportJSON) > 0 {
-		_ = json.Unmarshal(row.ReportJSON, &result.Report)
+	var rows []validationResultRow
+	err := r.db.SelectContext(ctx, &rows, query, args...)
+	if err != nil {
+		return nil, "", err
 	}
 
-	return result, nil
+	var nextCursor string
+	if len(rows) > limit {
+		nextCursor = rows[limit].CreatedAt.Format(time.RFC3339Nano)
+		rows = rows[:limit]
+	}
+
+	results := make([]*domain.ValidationResult, 0, len(rows))
+	for _, row := range rows {
+		results = append(results, mapRowToResult(row))
+	}
+
+	return results, nextCursor, nil
 }
 
 func (r *postgresValidationRepository) UpdateStatus(ctx context.Context, submissionID string, status domain.ValidationStatus) error {
@@ -148,4 +203,10 @@ func (r *postgresValidationRepository) GetSubmissionStoragePath(ctx context.Cont
 		return "", err
 	}
 	return storagePath, nil
+}
+
+func (r *postgresValidationRepository) UpdateSubmissionStatus(ctx context.Context, submissionID string, status string) error {
+	query := `UPDATE submissions SET status = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.ExecContext(ctx, query, status, submissionID)
+	return err
 }

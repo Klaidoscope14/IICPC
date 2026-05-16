@@ -98,11 +98,37 @@ func main() {
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {
-		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database disconnected"})
-			return
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		status := "SERVING"
+		deps := make(map[string]string)
+
+		if err := db.PingContext(ctx); err != nil {
+			status = "NOT_SERVING"
+			deps["database"] = "unhealthy"
+		} else {
+			deps["database"] = "healthy"
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+
+		if err := producer.Ping(ctx); err != nil {
+			status = "NOT_SERVING"
+			deps["redpanda"] = "unhealthy"
+		} else {
+			deps["redpanda"] = "healthy"
+		}
+
+		code := http.StatusOK
+		if status == "NOT_SERVING" {
+			code = http.StatusServiceUnavailable
+		}
+
+		c.JSON(code, gin.H{
+			"status":       status,
+			"service":      "validation-service-go",
+			"version":      "1.0.0",
+			"dependencies": deps,
+		})
 	})
 
 	// API Routes
@@ -110,8 +136,10 @@ func main() {
 	{
 		validations := api.Group("/validations")
 		{
+			validations.GET("", valHandler.ListResults)
 			validations.GET("/contract", valHandler.GetContract)
 			validations.GET("/:id", valHandler.GetResult)
+			validations.GET("/:id/report", valHandler.GetReport)
 			validations.POST("/:id/trigger", valHandler.TriggerValidation)
 		}
 	}
