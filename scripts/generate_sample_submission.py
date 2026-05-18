@@ -51,7 +51,8 @@ with open(os.path.join(build_dir, "CMakeLists.txt"), "w") as f:
 
 # 3. Create a python flask app that will run inside the built docker container
 # to respond correctly to runtime health probes from the benchmark orchestrator
-app_content = """from flask import Flask, jsonify
+app_content = """from flask import Flask, jsonify, request
+import uuid
 
 app = Flask(__name__)
 
@@ -59,9 +60,15 @@ app = Flask(__name__)
 def health():
     return jsonify({"status": "healthy", "service": "test-engine"}), 200
 
-@app.route('/api/v1/orders', methods=['POST'])
-def orders():
-    return jsonify({"status": "created", "order_id": "123"}), 201
+@app.route('/api/orders', methods=['POST'])
+def create_order():
+    # Return 201 Created for mock order placement
+    return jsonify({"status": "created", "order_id": str(uuid.uuid4())}), 201
+
+@app.route('/api/orders/<order_id>', methods=['DELETE'])
+def cancel_order(order_id):
+    # Return 200 OK for mock order cancellation
+    return jsonify({"status": "cancelled", "order_id": order_id}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)

@@ -43,6 +43,11 @@ func main() {
 		log.Fatalf("Failed to create orchestrator proxy: %v", err)
 	}
 
+	botFleetProxy, err := proxy.NewReverseProxy(cfg.BotFleetURL, proxy.WithServiceName("bot-fleet"))
+	if err != nil {
+		log.Fatalf("Failed to create bot-fleet proxy: %v", err)
+	}
+
 	// Set up router with middleware.
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -110,6 +115,9 @@ func main() {
 		v1.Any("/benchmarks", orchestratorProxy.Handler())
 		v1.Any("/benchmarks/*path", orchestratorProxy.Handler())
 		v1.Any("/leaderboard", orchestratorProxy.Handler())
+
+		// Bot fleet routes.
+		v1.Any("/fleet/*path", botFleetProxy.Handler())
 	}
 
 	// WebSocket passthrough.
@@ -121,6 +129,7 @@ func main() {
 			"submission-service":     cfg.SubmissionServiceURL,
 			"validation-service":     cfg.ValidationServiceURL,
 			"benchmark-orchestrator": cfg.OrchestratorURL,
+			"bot-fleet":              cfg.BotFleetURL,
 		})
 		status := "healthy"
 		httpStatus := http.StatusOK
