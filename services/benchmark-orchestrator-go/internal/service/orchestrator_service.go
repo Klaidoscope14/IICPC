@@ -259,6 +259,12 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		}
 
 		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+		
+		// Capture container logs asynchronously.
+		if err := s.containerMgr.CaptureLogs(context.Background(), containerID, s.logger); err != nil {
+			s.logger.Warn("failed to capture container logs", slog.String("error", err.Error()))
+		}
+		
 		s.recordSubmissionLog(context.Background(), submissionID, "runtime", "info", "Container started and passed readiness check.", map[string]string{
 			"deployment_id": deploymentID,
 			"container_id":  containerID,

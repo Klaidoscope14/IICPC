@@ -1,0 +1,35 @@
+{"time":"2026-05-18T22:26:46.2936012+05:30","level":"INFO","msg":"Starting validation-service-go","service":"validation-service"}
+{"time":"2026-05-18T22:26:46.3134785+05:30","level":"INFO","msg":"Starting to consume events","service":"validation-service","topic":"submission.created"}
+{"time":"2026-05-18T22:26:46.3134785+05:30","level":"INFO","msg":"consumer started","service":"validation-service","handler_count":1}
+{"time":"2026-05-18T22:26:46.3134785+05:30","level":"INFO","msg":"HTTP server listening","service":"validation-service","port":"8084"}
+{"time":"2026-05-18T22:26:55.9128304+05:30","level":"INFO","msg":"consumer started","service":"benchmark-orchestrator","handler_count":1}
+{"time":"2026-05-18T22:27:17.8622197+05:30","level":"INFO","msg":"submission uploaded successfully","service":"submission-service","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602","contestant_id":"106","version":1,"checksum":"67cb6aa749972362284b20cc0d84c5bbab6ae1ae45b37bd9e8743d3324a18adc","file_size":1531}
+{"time":"2026-05-18T22:27:17.8622197+05:30","level":"INFO","msg":"request","service":"submission-service","request_id":"06bdf4fa-7847-4f0f-8c23-50efe324a5a9","method":"POST","path":"/api/v1/submissions","status":201,"duration":51684900,"client_ip":"::1"}
+{"time":"2026-05-18T22:27:17.8805836+05:30","level":"INFO","msg":"event published","service":"submission-service","topic":"submission.created","key":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.2985437+05:30","level":"INFO","msg":"Received submission.created event","service":"validation-service","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.2985437+05:30","level":"INFO","msg":"Starting validation for submission","service":"validation-service","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.3428688+05:30","level":"INFO","msg":"event published","service":"validation-service","topic":"validation.completed","key":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.3428688+05:30","level":"INFO","msg":"Received validation completed event, triggering build and deploy","service":"benchmark-orchestrator","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.3428688+05:30","level":"INFO","msg":"Validation completed","service":"validation-service","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602","status":"passed","errors":0}
+{"time":"2026-05-18T22:27:26.3587267+05:30","level":"INFO","msg":"building docker image","service":"benchmark-orchestrator","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602","image":"submission-476255fa:1779123446358726700"}
+{"time":"2026-05-18T22:27:26.3587267+05:30","level":"INFO","msg":"building container image","service":"benchmark-orchestrator","image":"submission-476255fa:1779123446358726700"}
+{"time":"2026-05-18T22:27:26.4835313+05:30","level":"INFO","msg":"image built successfully","service":"benchmark-orchestrator","image":"submission-476255fa:1779123446358726700"}
+{"time":"2026-05-18T22:27:26.497319+05:30","level":"INFO","msg":"deployment created","service":"benchmark-orchestrator","deployment_id":"78cb1bee-10de-4459-a84c-4dd0d11d855f","submission_id":"476255fa-3630-4ec2-9e36-a3a0dacad602"}
+{"time":"2026-05-18T22:27:26.4979532+05:30","level":"INFO","msg":"starting deployment","service":"benchmark-orchestrator","deployment_id":"78cb1bee-10de-4459-a84c-4dd0d11d855f"}
+{"time":"2026-05-18T22:27:26.4979532+05:30","level":"INFO","msg":"creating container","service":"benchmark-orchestrator","image":"submission-476255fa:1779123446358726700","name":"submission-78cb1bee-1"}
+{"time":"2026-05-18T22:27:26.8758824+05:30","level":"INFO","msg":"container started","service":"benchmark-orchestrator","container_id":"45c81594b984","service_url":"http://localhost:55153"}
+{"time":"2026-05-18T22:27:26.8764328+05:30","level":"INFO","msg":"waiting for container health","service":"benchmark-orchestrator","container_id":"45c81594b984","health_url":"http://localhost:55153/health"}
+{"time":"2026-05-18T22:27:27.3908081+05:30","level":"INFO","msg":"container health probe passed","service":"benchmark-orchestrator","container_id":"45c81594b984","status":200}
+{"time":"2026-05-18T22:27:27.4158839+05:30","level":"INFO","msg":"event published","service":"benchmark-orchestrator","topic":"deployment.ready","key":"78cb1bee-10de-4459-a84c-4dd0d11d855f"}
+{"time":"2026-05-18T22:27:27.4190244+05:30","level":"INFO","msg":"* Serving Flask app 'app'","service":"benchmark-orchestrator","type":"container_runtime","stream":"stdout"}
+{"time":"2026-05-18T22:27:27.4195483+05:30","level":"INFO","msg":"* Debug mode: off","service":"benchmark-orchestrator","type":"container_runtime","stream":"stdout"}
+{"time":"2026-05-18T22:27:27.4195483+05:30","level":"INFO","msg":"\u001b[31m\u001b[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.\u001b[0m","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:27:27.4195483+05:30","level":"INFO","msg":"* Running on all addresses (0.0.0.0)","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:27:27.4195483+05:30","level":"INFO","msg":"* Running on http://127.0.0.1:8080","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:27:27.4195483+05:30","level":"INFO","msg":"* Running on http://172.17.0.5:8080","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:27:27.4200835+05:30","level":"INFO","msg":"\u001b[33mPress CTRL+C to quit\u001b[0m","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:27:27.4200835+05:30","level":"INFO","msg":"172.17.0.1 - - [18/May/2026 16:57:27] \"GET /health HTTP/1.1\" 200 -","service":"benchmark-orchestrator","type":"container_runtime","stream":"stderr"}
+{"time":"2026-05-18T22:28:02.399125+05:30","level":"INFO","msg":"Shutting down service...","service":"validation-service"}
+{"time":"2026-05-18T22:28:02.399125+05:30","level":"ERROR","msg":"fetch error","service":"validation-service","topic":"","error":"context canceled"}
+{"time":"2026-05-18T22:28:02.3996353+05:30","level":"ERROR","msg":"Consumer exited with error","service":"validation-service","error":"context canceled"}
+{"time":"2026-05-18T22:28:02.3996353+05:30","level":"INFO","msg":"Server exiting","service":"validation-service"}
