@@ -155,7 +155,7 @@
 
 ------------------------------------------------
 
-# Logging System-
+# Logging System- [Shaurya]
 1. Build logs capture
 2. Container runtime logs
 3. Benchmark execution logs
@@ -164,6 +164,91 @@
 6. Structured logging
 7. Log streaming to frontend
 8. Log persistence
+
+------------------------------------------------
+
+# Bot Fleet Service (C++)- [Shaurya]
+1. WebSocket bot client
+2. REST bot client
+3. FIX protocol support (optional)
+4. Concurrent bot spawning
+5. Worker pool system
+6. Configurable concurrency
+7. Configurable benchmark duration
+8. Limit order generator
+9. Market order generator
+10. Cancel order generator
+11. Randomized order simulation
+12. Burst traffic simulation
+13. Trading pattern simulation
+14. Benchmark preset support
+15. Order request tracking
+16. Response tracking
+17. Failure tracking
+18. Timeout detection
+19. Distributed bot workers
+20. Publish telemetry events
+21. Health endpoint
+
+------------------------------------------------
+
+# Telemetry Service- [Shaurya]
+1. Receive benchmark events
+2. Order acknowledgment latency tracking
+3. p50 latency calculation
+4. p90 latency calculation
+5. p99 latency calculation
+6. Throughput calculation (TPS)
+7. Error rate calculation
+8. Failure rate calculation
+9. Success rate calculation
+10. Timeout rate calculation
+11. Metrics aggregation
+12. Time-series persistence
+13. Real-time stream publisher
+14. Historical benchmark metrics
+15. Health endpoint
+
+------------------------------------------------
+
+# Validation/Correctness Engine (C++)- [Shaurya]
+1. Orderbook reconstruction
+2. Match replay engine
+3. Price priority validation
+4. Time priority validation
+5. Fill correctness validation
+6. Sequence consistency checks
+7. Duplicate order detection
+8. Invalid fill detection
+9. Correctness scoring
+10. Replay logs
+11. Deterministic validation
+12. Health endpoint
+
+------------------------------------------------
+
+# Scoring Engine- [Shaurya]
+1. Composite score calculation
+2. Throughput score
+3. Latency score
+4. Correctness score
+5. Stability score
+6. Weighted scoring formula
+7. Dynamic score updates
+8. Benchmark ranking
+9. Rank history tracking
+
+------------------------------------------------
+
+# Leaderboard Service- [Shaurya]
+1. Live leaderboard endpoint
+2. Ranking computation
+3. Dynamic score updates
+4. WebSocket streaming
+5. Benchmark comparison
+6. Historical leaderboard
+7. Team performance summary
+8. Health endpoint
 
 ------------------------------------------------
 
@@ -214,91 +299,6 @@
 5. Flash crash simulation
 6. Stress overload benchmark
 7. Custom benchmark config
-
-------------------------------------------------
-
-# Bot Fleet Service (C++)-
-1. WebSocket bot client
-2. REST bot client
-3. FIX protocol support (optional)
-4. Concurrent bot spawning
-5. Worker pool system
-6. Configurable concurrency
-7. Configurable benchmark duration
-8. Limit order generator
-9. Market order generator
-10. Cancel order generator
-11. Randomized order simulation
-12. Burst traffic simulation
-13. Trading pattern simulation
-14. Benchmark preset support
-15. Order request tracking
-16. Response tracking
-17. Failure tracking
-18. Timeout detection
-19. Distributed bot workers
-20. Publish telemetry events
-21. Health endpoint
-
-------------------------------------------------
-
-# Telemetry Service-
-1. Receive benchmark events
-2. Order acknowledgment latency tracking
-3. p50 latency calculation
-4. p90 latency calculation
-5. p99 latency calculation
-6. Throughput calculation (TPS)
-7. Error rate calculation
-8. Failure rate calculation
-9. Success rate calculation
-10. Timeout rate calculation
-11. Metrics aggregation
-12. Time-series persistence
-13. Real-time stream publisher
-14. Historical benchmark metrics
-15. Health endpoint
-
-------------------------------------------------
-
-# Validation/Correctness Engine (C++)-
-1. Orderbook reconstruction
-2. Match replay engine
-3. Price priority validation
-4. Time priority validation
-5. Fill correctness validation
-6. Sequence consistency checks
-7. Duplicate order detection
-8. Invalid fill detection
-9. Correctness scoring
-10. Replay logs
-11. Deterministic validation
-12. Health endpoint
-
-------------------------------------------------
-
-# Scoring Engine-
-1. Composite score calculation
-2. Throughput score
-3. Latency score
-4. Correctness score
-5. Stability score
-6. Weighted scoring formula
-7. Dynamic score updates
-8. Benchmark ranking
-9. Rank history tracking
-
-------------------------------------------------
-
-# Leaderboard Service-
-1. Live leaderboard endpoint
-2. Ranking computation
-3. Dynamic score updates
-4. WebSocket streaming
-5. Benchmark comparison
-6. Historical leaderboard
-7. Team performance summary
-8. Health endpoint
 
 ------------------------------------------------
 
