@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Upload } from 'lucide-react'
-import { apiPost } from '../lib/api'
+import { apiClient } from '../lib/api'
 import type { SubmissionFormData } from '../types'
 
 const ALLOWED_EXTENSIONS = ['.zip', '.tar', '.tar.gz']
@@ -94,16 +94,16 @@ export function SubmissionForm() {
     setSubmitting(true)
 
     try {
-      // Read file as base64 for submission.
-      const base64Data = await readFileAsBase64(selectedFile)
+      const form = new FormData()
+      form.append('contestant_id', formData.contestantId)
+      form.append('team_name', formData.teamName)
+      form.append('language', formData.language)
+      form.append('dockerfile', formData.dockerfile || '')
+      form.append('code_archive', selectedFile)
 
-      const result = await apiPost<{ id: string }>('/api/v1/submissions', {
-        contestant_id: formData.contestantId,
-        team_name: formData.teamName,
-        language: formData.language,
-        code_archive: base64Data,
-        dockerfile: formData.dockerfile || '',
-        metadata: {},
+      const result = await apiClient<{ id: string }>('/api/v1/submissions', {
+        method: 'POST',
+        body: form,
       })
 
       setMessage({ type: 'success', text: `Submission successful! ID: ${result.id}` })

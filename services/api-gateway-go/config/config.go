@@ -11,6 +11,7 @@ type Config struct {
 	SubmissionServiceURL string
 	ValidationServiceURL string
 	OrchestratorURL      string
+	BotFleetURL          string
 	RateLimitPerMinute   int
 	MaxBodyBytes         int64
 	AuthToken            string
@@ -23,6 +24,7 @@ func Load() *Config {
 		SubmissionServiceURL: getEnv("SUBMISSION_SERVICE_URL", "http://localhost:8080"),
 		ValidationServiceURL: getEnv("VALIDATION_SERVICE_URL", "http://localhost:8084"),
 		OrchestratorURL:      getEnv("ORCHESTRATOR_URL", "http://localhost:8081"),
+		BotFleetURL:          getEnv("BOT_FLEET_URL", "http://localhost:8085"),
 		RateLimitPerMinute:   getEnvAsInt("RATE_LIMIT_PER_MINUTE", 600),
 		MaxBodyBytes:         int64(getEnvAsInt("MAX_BODY_SIZE_MB", 64)) * 1024 * 1024,
 		AuthToken:            getEnv("API_AUTH_TOKEN", ""),

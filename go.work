@@ -4,6 +4,7 @@ use (
 	./pkg
 	./services/api-gateway-go
 	./services/benchmark-orchestrator-go
+	./services/bot-fleet-go
 	./services/submission-service-go
 	./services/validation-service-go
 )

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/iicpc/pkg/events"
+	"github.com/iicpc/pkg/logging"
 	"github.com/iicpc/pkg/middleware"
 	"github.com/iicpc/validation-service-go/config"
 	"github.com/iicpc/validation-service-go/internal/consumer"
@@ -26,7 +27,7 @@ import (
 
 func main() {
 	// Setup structured logging
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := logging.NewLogger("validation-service")
 	slog.SetDefault(logger)
 
 	slog.Info("Starting validation-service-go")

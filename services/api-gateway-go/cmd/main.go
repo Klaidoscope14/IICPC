@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -41,6 +43,11 @@ func main() {
 		log.Fatalf("Failed to create orchestrator proxy: %v", err)
 	}
 
+	botFleetProxy, err := proxy.NewReverseProxy(cfg.BotFleetURL, proxy.WithServiceName("bot-fleet"))
+	if err != nil {
+		log.Fatalf("Failed to create bot-fleet proxy: %v", err)
+	}
+
 	// Set up router with middleware.
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -66,6 +73,39 @@ func main() {
 		v1.Any("/submissions", submissionProxy.Handler())
 		v1.Any("/submissions/*path", submissionProxy.Handler())
 
+		// Route: Log Streaming (SSE)
+		v1.GET("/logs/stream", func(c *gin.Context) {
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+
+			file, err := os.Open(logging.GetLogFilePath())
+			if err != nil {
+				c.SSEvent("error", "failed to open log file")
+				return
+			}
+			defer file.Close()
+
+			// Start tailing from the end for real-time logs.
+			file.Seek(0, os.SEEK_END)
+			reader := bufio.NewReader(file)
+
+			for {
+				select {
+				case <-c.Request.Context().Done():
+					return
+				default:
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						time.Sleep(500 * time.Millisecond)
+						continue
+					}
+					c.SSEvent("message", line)
+					c.Writer.Flush()
+				}
+			}
+		})
+
 		v1.Any("/validations", validationProxy.Handler())
 		v1.Any("/validations/*path", validationProxy.Handler())
 
@@ -75,6 +115,9 @@ func main() {
 		v1.Any("/benchmarks", orchestratorProxy.Handler())
 		v1.Any("/benchmarks/*path", orchestratorProxy.Handler())
 		v1.Any("/leaderboard", orchestratorProxy.Handler())
+
+		// Bot fleet routes.
+		v1.Any("/fleet/*path", botFleetProxy.Handler())
 	}
 
 	// WebSocket passthrough.
@@ -86,6 +129,7 @@ func main() {
 			"submission-service":     cfg.SubmissionServiceURL,
 			"validation-service":     cfg.ValidationServiceURL,
 			"benchmark-orchestrator": cfg.OrchestratorURL,
+			"bot-fleet":              cfg.BotFleetURL,
 		})
 		status := "healthy"
 		httpStatus := http.StatusOK

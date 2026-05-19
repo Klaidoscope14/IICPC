@@ -41,6 +41,9 @@ type Manager interface {
 
 	// WaitForHealthy polls the container until it responds on the health endpoint.
 	WaitForHealthy(ctx context.Context, containerID string, healthURL string, timeout time.Duration) error
+
+	// CaptureLogs streams stdout and stderr from the container into the provided logger.
+	CaptureLogs(ctx context.Context, containerID string, logger *slog.Logger) error
 }
 
 // BuildResult contains bounded output collected from the Docker build stream.
@@ -248,6 +251,54 @@ func (m *DockerManager) Remove(ctx context.Context, containerID string) error {
 		Force:         true,
 		RemoveVolumes: true,
 	})
+}
+
+// CaptureLogs tails the container logs and writes them to the provided logger.
+func (m *DockerManager) CaptureLogs(ctx context.Context, containerID string, logger *slog.Logger) error {
+	logs, err := m.client.ContainerLogs(ctx, containerID, types.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: false,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get container logs: %w", err)
+	}
+
+	go func() {
+		defer logs.Close()
+		buf := make([]byte, 8)
+		for {
+			_, err := io.ReadFull(logs, buf)
+			if err != nil {
+				if err != io.EOF {
+					logger.Debug("container log stream ended with error", slog.String("error", err.Error()))
+				}
+				return
+			}
+			var size uint32
+			size = uint32(buf[4])<<24 | uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7])
+			
+			payload := make([]byte, size)
+			if _, err := io.ReadFull(logs, payload); err != nil {
+				return
+			}
+			
+			// Docker multiplexes stdout and stderr using an 8-byte header.
+			// buf[0] is 1 for stdout, 2 for stderr.
+			logType := "stdout"
+			if buf[0] == 2 {
+				logType = "stderr"
+			}
+			
+			msg := strings.TrimSpace(string(payload))
+			if msg != "" {
+				logger.Info(msg, slog.String("type", "container_runtime"), slog.String("stream", logType))
+			}
+		}
+	}()
+
+	return nil
 }
 
 func (m *DockerManager) IsRunning(ctx context.Context, containerID string) (bool, error) {
