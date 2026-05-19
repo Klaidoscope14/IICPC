@@ -78,7 +78,7 @@ func main() {
 	consumer, err := events.NewConsumerWithOptions(
 		cfg.Redpanda.Brokers,
 		"orchestrator-group",
-		[]string{events.TopicValidationCompleted},
+		[]string{events.TopicValidationCompleted, events.TopicCorrectnessEvaluated, events.TopicBenchmarkFinished},
 		logger,
 		events.ConsumerOptions{PartitionConcurrency: 8},
 	)
@@ -95,6 +95,18 @@ func main() {
 			logger.Info("Received validation completed event, triggering build and deploy", "submission_id", event.SubmissionID)
 			_, err := orchestratorService.BuildAndDeploy(ctx, event.SubmissionID)
 			return err
+		})
+
+		// Register correctness handler
+		events.RegisterJSONHandler[events.CorrectnessEvaluatedEvent](consumer, events.TopicCorrectnessEvaluated, func(ctx context.Context, key string, event events.CorrectnessEvaluatedEvent) error {
+			logger.Info("Received correctness evaluated event, updating score", "benchmark_id", event.BenchmarkID)
+			return orchestratorService.ProcessCorrectnessEvaluated(ctx, event)
+		})
+
+		// Register benchmark finished handler
+		events.RegisterJSONHandler[events.BenchmarkFinishedEvent](consumer, events.TopicBenchmarkFinished, func(ctx context.Context, key string, event events.BenchmarkFinishedEvent) error {
+			logger.Info("Received benchmark finished event, creating result row", "benchmark_id", event.BenchmarkID)
+			return orchestratorService.ProcessBenchmarkFinished(ctx, event)
 		})
 
 		// Start consumer in background
