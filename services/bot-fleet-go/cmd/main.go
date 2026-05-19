@@ -89,10 +89,12 @@ func main() {
 				DurationSeconds: int32(cfg.DefaultDurationSeconds),
 				OrdersPerSecond: int32(cfg.DefaultOrdersPerSecond),
 				HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
+				TracesDir:       "../../traces", // Mount this in docker-compose later or use a local folder
 			}
 
 			go func() {
-				finalMetrics := runner.Run(context.Background(), runCfg)
+				runResult := runner.Run(context.Background(), runCfg)
+				finalMetrics := runResult.Metrics
 
 				if producer == nil {
 					return
@@ -118,6 +120,19 @@ func main() {
 						slog.String("benchmark_id", benchmarkID),
 						slog.String("submission_id", event.SubmissionID),
 					)
+				}
+
+				if runResult.TracePath != "" {
+					traceEvent := events.TraceAvailableEvent{
+						BenchmarkID: benchmarkID,
+						FilePath:    runResult.TracePath,
+						CreatedAt:   time.Now().UTC(),
+					}
+					if err := producer.PublishTraceAvailable(pubCtx, traceEvent); err != nil {
+						logger.Warn("failed to publish trace_available event", slog.String("error", err.Error()))
+					} else {
+						logger.Info("benchmark.trace_available event published", slog.String("file_path", runResult.TracePath))
+					}
 				}
 			}()
 
@@ -210,6 +225,7 @@ func main() {
 			DurationSeconds: req.Duration,
 			OrdersPerSecond: req.OPS,
 			HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
+			TracesDir:       "../../traces",
 		}
 
 		go func() {

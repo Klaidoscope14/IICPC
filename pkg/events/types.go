@@ -14,9 +14,11 @@ const (
 	TopicEngineReady         = contractevents.TopicEngineReady
 	TopicBenchmarkStarted    = contractevents.TopicBenchmarkStarted
 	TopicBenchmarkCompleted  = contractevents.TopicBenchmarkFinished
-	TopicBenchmarkFinished   = contractevents.TopicBenchmarkFinished
-	TopicTelemetrySnapshot   = contractevents.TopicTelemetrySnapshot
-	TopicLeaderboardUpdated  = contractevents.TopicLeaderboardUpdated
+	TopicBenchmarkFinished    = contractevents.TopicBenchmarkFinished
+	TopicTelemetrySnapshot    = contractevents.TopicTelemetrySnapshot
+	TopicLeaderboardUpdated   = contractevents.TopicLeaderboardUpdated
+	TopicTraceAvailable       = contractevents.TopicTraceAvailable
+	TopicCorrectnessEvaluated = contractevents.TopicCorrectnessEvaluated
 )
 
 // SubmissionCreatedEvent is published when a new submission is accepted.
@@ -39,4 +41,6 @@ type BenchmarkCompletedEvent = contractevents.BenchmarkFinishedEvent
 type BenchmarkFinishedEvent = contractevents.BenchmarkFinishedEvent
 type TelemetrySnapshotEvent = contractevents.TelemetrySnapshotEvent
 type LeaderboardUpdatedEvent = contractevents.LeaderboardUpdatedEvent
+type TraceAvailableEvent = contractevents.TraceAvailableEvent
+type CorrectnessEvaluatedEvent = contractevents.CorrectnessEvaluatedEvent
 type Envelope = contractevents.Envelope

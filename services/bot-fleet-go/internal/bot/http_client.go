@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/iicpc/pkg/contracts/correctness"
 )
 
 // Result captures the outcome of a single bot request.
@@ -26,17 +27,19 @@ type Result struct {
 
 // HTTPClient is a bot that fires HTTP requests at the contestant's engine.
 type HTTPClient struct {
-	serviceURL string
-	httpClient *http.Client
+	serviceURL  string
+	httpClient  *http.Client
+	traceLogger *TraceLogger
 }
 
 // NewHTTPClient creates a bot HTTP client targeting the given service URL.
-func NewHTTPClient(serviceURL string, timeoutMs int) *HTTPClient {
+func NewHTTPClient(serviceURL string, timeoutMs int, traceLogger *TraceLogger) *HTTPClient {
 	return &HTTPClient{
 		serviceURL: serviceURL,
 		httpClient: &http.Client{
 			Timeout: time.Duration(timeoutMs) * time.Millisecond,
 		},
+		traceLogger: traceLogger,
 	}
 }
 
@@ -77,6 +80,22 @@ func (c *HTTPClient) Send(ctx context.Context, order Order) Result {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-ID", requestID)
 
+	if c.traceLogger != nil {
+		c.traceLogger.Log(correctness.TraceEvent{
+			EventType: correctness.TraceEventOrderSent,
+			Timestamp: sentAt,
+			OrderSent: &correctness.OrderPayload{
+				RequestID: requestID,
+				OrderID:   order.OrderID,
+				Type:      string(order.Type),
+				Symbol:    string(order.Symbol),
+				Side:      string(order.Side),
+				Price:     order.Price,
+				Quantity:  int32(order.Quantity),
+			},
+		})
+	}
+
 	resp, err := c.httpClient.Do(req)
 	ackAt := time.Now()
 	result.AckAt = ackAt
@@ -94,5 +113,17 @@ func (c *HTTPClient) Send(ctx context.Context, order Order) Result {
 	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	result.StatusCode = resp.StatusCode
+	
+	if c.traceLogger != nil {
+		c.traceLogger.Log(correctness.TraceEvent{
+			EventType: correctness.TraceEventOrderAcked,
+			Timestamp: ackAt,
+			OrderAcked: &correctness.AckPayload{
+				RequestID:  requestID,
+				StatusCode: result.StatusCode,
+			},
+		})
+	}
+	
 	return result
 }

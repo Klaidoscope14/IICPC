@@ -20,6 +20,8 @@ const (
 	TopicBenchmarkFinished   = "benchmark.completed"
 	TopicTelemetrySnapshot   = "telemetry.snapshot"
 	TopicLeaderboardUpdated  = "leaderboard.updated"
+	TopicTraceAvailable      = "benchmark.trace_available"
+	TopicCorrectnessEvaluated = "correctness.evaluated"
 )
 
 type Envelope struct {
@@ -99,4 +101,17 @@ type LeaderboardUpdatedEvent struct {
 	BenchmarkID string                       `json:"benchmark_id,omitempty"`
 	UpdatedAt   time.Time                    `json:"updated_at"`
 	Entries     []benchmark.LeaderboardEntry `json:"entries"`
+}
+
+type TraceAvailableEvent struct {
+	BenchmarkID string    `json:"benchmark_id"`
+	FilePath    string    `json:"file_path"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type CorrectnessEvaluatedEvent struct {
+	BenchmarkID      string    `json:"benchmark_id"`
+	CorrectnessScore float64   `json:"correctness_score"`
+	TotalViolations  int32     `json:"total_violations"`
+	EvaluatedAt      time.Time `json:"evaluated_at"`
 }

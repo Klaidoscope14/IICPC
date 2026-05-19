@@ -16,12 +16,13 @@ type WorkerConfig struct {
 	// Inter-request delay = 1s / (ordersPerSecond / numWorkers).
 	InterRequestDelay time.Duration
 	HTTPTimeoutMs     int
+	TraceLogger       *TraceLogger
 }
 
 // RunWorker is a single bot goroutine. It sends orders until ctx is cancelled,
 // pushing each Result into the results channel.
 func RunWorker(ctx context.Context, cfg WorkerConfig, results chan<- Result, logger *slog.Logger) {
-	client := NewHTTPClient(cfg.ServiceURL, cfg.HTTPTimeoutMs)
+	client := NewHTTPClient(cfg.ServiceURL, cfg.HTTPTimeoutMs, cfg.TraceLogger)
 
 	logger.Debug("bot spawned",
 		slog.String("benchmark_id", cfg.BenchmarkID),

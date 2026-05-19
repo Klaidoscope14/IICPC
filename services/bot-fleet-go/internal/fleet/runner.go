@@ -19,10 +19,17 @@ type RunConfig struct {
 	DurationSeconds int32
 	OrdersPerSecond int32
 	HTTPTimeoutMs   int
+	TracesDir       string
 }
 
 // FinalMetrics is returned when the run completes.
 type FinalMetrics = telemetry.Metrics
+
+// RunResult contains the final metrics and the path to the trace file (if generated).
+type RunResult struct {
+	Metrics   FinalMetrics
+	TracePath string
+}
 
 // Runner orchestrates the worker pool and telemetry collection.
 type Runner struct {
@@ -39,10 +46,33 @@ func NewRunner(logger *slog.Logger, onSnapshot func(benchmarkID string, m teleme
 }
 
 // Run starts the fleet, blocks for the benchmark duration, and returns final metrics.
-func (r *Runner) Run(ctx context.Context, cfg RunConfig) FinalMetrics {
+func (r *Runner) Run(ctx context.Context, cfg RunConfig) RunResult {
 	duration := time.Duration(cfg.DurationSeconds) * time.Second
 	runCtx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
+
+	var traceLogger *bot.TraceLogger
+	var traceFilePath string
+	var err error
+	if cfg.TracesDir != "" {
+		traceLogger, traceFilePath, err = bot.NewTraceLogger(cfg.BenchmarkID, cfg.TracesDir)
+		if err != nil {
+			r.logger.Error("failed to initialize trace logger, proceeding without tracing", slog.String("error", err.Error()))
+			traceLogger = nil
+			traceFilePath = ""
+		} else {
+			defer traceLogger.Close()
+		}
+	}
+
+	if traceLogger != nil {
+		wsClient := bot.NewWSClient(cfg.ServiceURL, traceLogger, r.logger)
+		go func() {
+			if err := wsClient.Run(runCtx); err != nil {
+				r.logger.Error("websocket client error", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	collector := telemetry.NewCollector()
 
@@ -79,6 +109,7 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) FinalMetrics {
 			WorkerID:          i + 1,
 			InterRequestDelay: interRequestDelay,
 			HTTPTimeoutMs:     cfg.HTTPTimeoutMs,
+			TraceLogger:       traceLogger,
 		}
 		go func(wcfg bot.WorkerConfig) {
 			defer wg.Done()
@@ -115,5 +146,8 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) FinalMetrics {
 		slog.Float64("p99_latency_ms", final.P99LatencyMs),
 	)
 
-	return final
+	return RunResult{
+		Metrics:   final,
+		TracePath: traceFilePath,
+	}
 }
