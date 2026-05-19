@@ -9,6 +9,7 @@ import (
 
 	"github.com/iicpc/benchmark-orchestrator-go/internal/domain"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // OrchestratorRepository defines the persistence contract for deployments and benchmarks.
@@ -16,6 +17,7 @@ type OrchestratorRepository interface {
 	// Deployments
 	CreateDeployment(ctx context.Context, deployment *domain.Deployment) error
 	GetDeploymentByID(ctx context.Context, id string) (*domain.Deployment, error)
+	GetLatestDeploymentBySubmission(ctx context.Context, submissionID string) (*domain.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status domain.DeploymentStatus, serviceURL string, containerID string, errMsg string) error
 	GetSubmissionStoragePath(ctx context.Context, submissionID string) (string, error)
 	CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error
@@ -32,6 +34,8 @@ type OrchestratorRepository interface {
 
 	// Results
 	UpsertBenchmarkResult(ctx context.Context, result *domain.BenchmarkResult) error
+	GetBenchmarkResult(ctx context.Context, benchmarkID string) (*domain.BenchmarkResult, error)
+	UpdateCorrectnessScore(ctx context.Context, benchmarkID string, correctnessScore float64, newCompositeScore float64) error
 	GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error)
 }
 
@@ -93,7 +97,7 @@ func (r *postgresRepository) GetDeploymentByID(ctx context.Context, id string) (
 		&containerID,
 		&d.ContainerImage,
 		&serviceURL,
-		&d.ExposedPorts,
+		pq.Array(&d.ExposedPorts),
 		&d.Status,
 		&limitsJSON,
 		&errMsg,
@@ -105,6 +109,58 @@ func (r *postgresRepository) GetDeploymentByID(ctx context.Context, id string) (
 			return nil, fmt.Errorf("%w: deployment %s", domain.ErrNotFound, id)
 		}
 		return nil, fmt.Errorf("failed to get deployment: %w", err)
+	}
+
+	if containerID.Valid {
+		d.ContainerID = containerID.String
+	}
+	if serviceURL.Valid {
+		d.ServiceURL = serviceURL.String
+	}
+	if errMsg.Valid {
+		d.ErrorMessage = errMsg.String
+	}
+
+	if len(limitsJSON) > 0 {
+		if err := json.Unmarshal(limitsJSON, &d.ResourceLimits); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal resource limits: %w", err)
+		}
+	}
+
+	return &d, nil
+}
+
+func (r *postgresRepository) GetLatestDeploymentBySubmission(ctx context.Context, submissionID string) (*domain.Deployment, error) {
+	query := `
+		SELECT id, submission_id, container_id, container_image, service_url, exposed_ports, status, resource_limits, error_message, created_at, updated_at
+		FROM deployments
+		WHERE submission_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	var d domain.Deployment
+	var limitsJSON []byte
+	var containerID, serviceURL, errMsg sql.NullString
+
+	err := r.db.QueryRowContext(ctx, query, submissionID).Scan(
+		&d.ID,
+		&d.SubmissionID,
+		&containerID,
+		&d.ContainerImage,
+		&serviceURL,
+		pq.Array(&d.ExposedPorts),
+		&d.Status,
+		&limitsJSON,
+		&errMsg,
+		&d.CreatedAt,
+		&d.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: no deployments for submission %s", domain.ErrNotFound, submissionID)
+		}
+		return nil, fmt.Errorf("failed to get latest deployment: %w", err)
 	}
 
 	if containerID.Valid {
@@ -411,6 +467,57 @@ func (r *postgresRepository) UpsertBenchmarkResult(ctx context.Context, result *
 		return fmt.Errorf("failed to commit benchmark result transaction: %w", err)
 	}
 	return nil
+}
+
+func (r *postgresRepository) GetBenchmarkResult(ctx context.Context, benchmarkID string) (*domain.BenchmarkResult, error) {
+	query := `
+		SELECT id, submission_id, benchmark_id, tps, p50_latency_ms, p90_latency_ms, p99_latency_ms,
+			correctness_score, total_orders, failed_orders, composite_score, created_at
+		FROM benchmark_results
+		WHERE benchmark_id = $1
+	`
+	var res domain.BenchmarkResult
+	err := r.db.QueryRowContext(ctx, query, benchmarkID).Scan(
+		&res.ID, &res.SubmissionID, &res.BenchmarkID,
+		&res.TPS, &res.P50LatencyMs, &res.P90LatencyMs, &res.P99LatencyMs,
+		&res.CorrectnessScore, &res.TotalOrders, &res.FailedOrders,
+		&res.CompositeScore, &res.CreatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: benchmark result %s", domain.ErrNotFound, benchmarkID)
+		}
+		return nil, fmt.Errorf("failed to get benchmark result: %w", err)
+	}
+	return &res, nil
+}
+
+func (r *postgresRepository) UpdateCorrectnessScore(ctx context.Context, benchmarkID string, correctnessScore float64, newCompositeScore float64) error {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin update score transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queryHistory := `
+		UPDATE benchmark_history
+		SET correctness_score = $1, composite_score = $2
+		WHERE benchmark_id = $3
+	`
+	if _, err := tx.ExecContext(ctx, queryHistory, correctnessScore, newCompositeScore, benchmarkID); err != nil {
+		return fmt.Errorf("failed to update benchmark_history score: %w", err)
+	}
+
+	queryCurrent := `
+		UPDATE benchmark_results
+		SET correctness_score = $1, composite_score = $2
+		WHERE benchmark_id = $3
+	`
+	if _, err := tx.ExecContext(ctx, queryCurrent, correctnessScore, newCompositeScore, benchmarkID); err != nil {
+		return fmt.Errorf("failed to update benchmark_results score: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 func (r *postgresRepository) GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error) {

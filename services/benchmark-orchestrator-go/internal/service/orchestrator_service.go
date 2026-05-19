@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +24,8 @@ type OrchestratorService interface {
 	StartBenchmark(ctx context.Context, submissionID, deploymentID string, config domain.BenchmarkConfig) (*domain.Benchmark, error)
 	GetBenchmarkStatus(ctx context.Context, benchmarkID string) (*domain.Benchmark, error)
 	StopBenchmark(ctx context.Context, benchmarkID string) error
+	ProcessBenchmarkFinished(ctx context.Context, evt events.BenchmarkFinishedEvent) error
+	ProcessCorrectnessEvaluated(ctx context.Context, evt events.CorrectnessEvaluatedEvent) error
 	GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error)
 }
 
@@ -466,11 +466,8 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 		return
 	}
 
-	// Compute and store composite score.
-	score := s.scoring.ComputeScore(metrics)
-
-	// Run C++ Validation Engine
-	correctnessScore := s.runValidationEngine(benchmarkID)
+	// Compute base score (before correctness multiplier).
+	baseScore := s.scoring.ComputeScore(metrics)
 
 	// Get the benchmark to find the submission_id.
 	benchmark, err := s.repo.GetBenchmarkByID(ctx, benchmarkID)
@@ -487,10 +484,10 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 		P50LatencyMs:     metrics.P50LatencyMs,
 		P90LatencyMs:     metrics.P90LatencyMs,
 		P99LatencyMs:     metrics.P99LatencyMs,
-		CorrectnessScore: correctnessScore,
+		CorrectnessScore: 0, // Awaits real evaluation from Correctness Engine via Redpanda
 		TotalOrders:      metrics.TotalOrdersSent,
 		FailedOrders:     metrics.TotalErrors,
-		CompositeScore:   score * (correctnessScore / 100), // Adjust composite score by correctness
+		CompositeScore:   0, // Initial composite is 0 until correctness score is published
 		CreatedAt:        time.Now(),
 	}
 
@@ -501,40 +498,122 @@ func (s *orchestratorService) finishBenchmark(benchmarkID string, elapsed int64,
 	s.publishBenchmarkFinished(ctx, benchmark, result, elapsed)
 	s.publishLeaderboardUpdated(ctx, benchmarkID)
 
-	s.logger.Info("benchmark completed",
+	s.logger.Info("benchmark completed (awaiting correctness evaluation)",
 		slog.String("benchmark_id", benchmarkID),
-		slog.Float64("composite_score", score),
+		slog.Float64("base_score", baseScore),
 	)
 	s.touchDeployment(benchmark.DeploymentID)
 }
 
-func (s *orchestratorService) runValidationEngine(benchmarkID string) float64 {
-	// Mock generating CSV logs for the validation engine
-	workDir := filepath.Join("/tmp", "iicpc-benchmarks", benchmarkID)
-	os.MkdirAll(workDir, 0755)
+func (s *orchestratorService) ProcessBenchmarkFinished(ctx context.Context, evt events.BenchmarkFinishedEvent) error {
+	// Look up the active deployment ID for this submission.
+	s.mu.Lock()
+	deploymentID := s.deploymentBySubmission[evt.SubmissionID]
+	s.mu.Unlock()
 
-	tradesPath := filepath.Join(workDir, "trades.csv")
-	ordersPath := filepath.Join(workDir, "orders.csv")
-
-	// Dummy CSV files so the engine doesn't crash on file not found
-	os.WriteFile(tradesPath, []byte("trade_id,order_id,price,quantity,timestamp\n1,1,100.5,10,1234567890\n"), 0644)
-	os.WriteFile(ordersPath, []byte("order_id,symbol,side,price,quantity,timestamp\n1,AAPL,BUY,100.5,10,1234567800\n"), 0644)
-
-	// Note: In production, the bot engine would produce the actual CSVs or Redpanda topics directly to this dir.
-
-	enginePath, _ := filepath.Abs("../../high-performance/validation-engine-cpp/build/validation_engine")
-	cmd := exec.Command(enginePath, "--trades", tradesPath, "--orders", ordersPath)
-	cmd.Dir = workDir
-
-	err := cmd.Run()
-	if err != nil {
-		s.logger.Warn("Validation engine detected correctness issues", slog.String("error", err.Error()))
-		// Penalize correctness score
-		return 85.0
+	if deploymentID == "" {
+		s.logger.Warn("could not find active deployment in cache for submission, falling back to db query", slog.String("submission_id", evt.SubmissionID))
+		deployment, err := s.repo.GetLatestDeploymentBySubmission(ctx, evt.SubmissionID)
+		if err != nil {
+			s.logger.Error("failed to find deployment in DB, using submission_id as unsafe fallback", slog.String("submission_id", evt.SubmissionID), slog.String("error", err.Error()))
+			deploymentID = evt.SubmissionID
+		} else {
+			deploymentID = deployment.ID
+		}
 	}
 
-	s.logger.Info("Validation engine passed successfully")
-	return 100.0
+	// Because bot-fleet bypasses /benchmarks/start and auto-generates its own benchmark_id,
+	// we must create the parent `benchmarks` table row first to satisfy Foreign Key constraints!
+	b := &domain.Benchmark{
+		ID:           evt.BenchmarkID,
+		SubmissionID: evt.SubmissionID,
+		DeploymentID: deploymentID,
+		Status:       domain.BenchmarkStatusCompleted,
+		Config:       domain.BenchmarkConfig{},
+		StartedAt:    time.Now().Add(-time.Duration(evt.ElapsedSeconds) * time.Second),
+		CompletedAt:  &evt.FinishedAt,
+		ElapsedTime:  evt.ElapsedSeconds,
+	}
+	if err := s.repo.CreateBenchmark(ctx, b); err != nil {
+		s.logger.Warn("failed to create parent benchmark row (might already exist)", slog.String("error", err.Error()))
+	}
+
+	result := &domain.BenchmarkResult{
+		ID:               uuid.New().String(),
+		SubmissionID:     evt.SubmissionID,
+		BenchmarkID:      evt.BenchmarkID,
+		TPS:              evt.TPS,
+		P50LatencyMs:     evt.P99LatencyMs * 0.5, // approximate since bot-fleet doesn't send p50 in this event yet
+		P90LatencyMs:     evt.P99LatencyMs * 0.8,
+		P99LatencyMs:     evt.P99LatencyMs,
+		CorrectnessScore: 0,
+		TotalOrders:      int32(evt.TPS * float64(evt.ElapsedSeconds)),
+		FailedOrders:     0,
+		CompositeScore:   0,
+		CreatedAt:        time.Now(),
+	}
+	
+	if err := s.repo.UpsertBenchmarkResult(ctx, result); err != nil {
+		s.logger.Error("failed to upsert benchmark result", slog.String("error", err.Error()))
+		return err
+	}
+	
+	s.logger.Info("created benchmark result from external bot-fleet event", slog.String("benchmark_id", evt.BenchmarkID))
+	s.publishLeaderboardUpdated(ctx, evt.BenchmarkID)
+	return nil
+}
+
+func (s *orchestratorService) ProcessCorrectnessEvaluated(ctx context.Context, evt events.CorrectnessEvaluatedEvent) error {
+	s.logger.Info("processing correctness evaluated event",
+		slog.String("benchmark_id", evt.BenchmarkID),
+		slog.Float64("correctness_score", evt.CorrectnessScore),
+		slog.Int("violations", int(evt.TotalViolations)),
+	)
+
+	// Fetch existing result (with retry to handle async race condition where correctness finishes before orchestrator's 15s loop)
+	var result *domain.BenchmarkResult
+	var err error
+	for i := 0; i < 5; i++ {
+		result, err = s.repo.GetBenchmarkResult(ctx, evt.BenchmarkID)
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get benchmark result after retries: %w", err)
+	}
+
+	// Re-calculate the base score based on the original result metrics
+	metrics := domain.TelemetryMetrics{
+		CurrentTPS:              result.TPS,
+		P50LatencyMs:            result.P50LatencyMs,
+		P90LatencyMs:            result.P90LatencyMs,
+		P99LatencyMs:            result.P99LatencyMs,
+		TotalOrdersSent:         result.TotalOrders,
+		TotalErrors:             result.FailedOrders,
+		TotalOrdersAcknowledged: result.TotalOrders - result.FailedOrders, // Approximation for score re-calc
+	}
+	baseScore := s.scoring.ComputeScore(metrics)
+
+	// New composite score incorporates real correctness score
+	newCompositeScore := baseScore * (evt.CorrectnessScore / 100.0)
+
+	// Update the database
+	err = s.repo.UpdateCorrectnessScore(ctx, evt.BenchmarkID, evt.CorrectnessScore, newCompositeScore)
+	if err != nil {
+		return fmt.Errorf("failed to update correctness score: %w", err)
+	}
+
+	s.logger.Info("updated benchmark result with correctness score",
+		slog.String("benchmark_id", evt.BenchmarkID),
+		slog.Float64("new_composite_score", newCompositeScore),
+	)
+
+	// Republish leaderboard so UI updates
+	s.publishLeaderboardUpdated(ctx, evt.BenchmarkID)
+
+	return nil
 }
 
 func (s *orchestratorService) GetBenchmarkStatus(ctx context.Context, benchmarkID string) (*domain.Benchmark, error) {
