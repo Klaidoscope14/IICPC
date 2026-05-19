@@ -167,7 +167,7 @@
 
 ------------------------------------------------
 
-# Bot Fleet Service (C++)- [Shaurya]
+# Bot Fleet Service - [Shaurya]
 1. WebSocket bot client
 2. REST bot client
 3. FIX protocol support (optional)
@@ -211,7 +211,7 @@
 
 ------------------------------------------------
 
-# Validation/Correctness Engine (C++)- [Shaurya]
+# Validation/Correctness Engine- [Shaurya]
 1. Orderbook reconstruction
 2. Match replay engine
 3. Price priority validation
@@ -312,18 +312,6 @@
 
 ------------------------------------------------
 
-# Kubernetes (Phase 2 / Bonus)-
-1. Pod deployment
-2. Worker autoscaling
-3. Bot fleet scaling
-4. Resource quotas
-5. Service discovery
-6. Deployment configs
-7. HPA autoscaling
-8. Rolling updates
-
-------------------------------------------------
-
 # Testing-
 1. Upload flow tests
 2. Validation tests
@@ -334,3 +322,15 @@
 7. API integration tests
 8. WebSocket tests
 9. End-to-end benchmark test
+
+------------------------------------------------
+
+# Kubernetes (Phase 2 / Bonus)-
+1. Pod deployment
+2. Worker autoscaling
+3. Bot fleet scaling
+4. Resource quotas
+5. Service discovery
+6. Deployment configs
+7. HPA autoscaling
+8. Rolling updates
