@@ -52,9 +52,36 @@ with open(os.path.join(build_dir, "CMakeLists.txt"), "w") as f:
 # 3. Create a python flask app that will run inside the built docker container
 # to respond correctly to runtime health probes from the benchmark orchestrator
 app_content = """from flask import Flask, jsonify, request
+from flask_sock import Sock
 import uuid
+import time
+import json
+import threading
 
 app = Flask(__name__)
+sock = Sock(app)
+
+# Global set of connected websocket clients
+clients = set()
+
+def broadcast_fill(order_id, symbol, side, price, qty):
+    report = {
+        "order_id": order_id,
+        "symbol": symbol,
+        "side": side,
+        "status": "filled",
+        "filled_qty": qty,
+        "leaves_qty": 0,
+        "price": price,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "match_id": str(uuid.uuid4())
+    }
+    msg = json.dumps(report)
+    for ws in list(clients):
+        try:
+            ws.send(msg)
+        except Exception:
+            clients.discard(ws)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -62,13 +89,30 @@ def health():
 
 @app.route('/api/orders', methods=['POST'])
 def create_order():
-    # Return 201 Created for mock order placement
-    return jsonify({"status": "created", "order_id": str(uuid.uuid4())}), 201
+    data = request.json or {}
+    order_id = str(uuid.uuid4())
+    
+    # Simulate async fill after returning 201
+    if "quantity" in data and "price" in data:
+        threading.Thread(target=lambda: (time.sleep(0.01), broadcast_fill(order_id, data.get("symbol", "BTC/USD"), data.get("side", "buy"), data.get("price"), data.get("quantity")))).start()
+        
+    return jsonify({"status": "created", "order_id": order_id}), 201
 
 @app.route('/api/orders/<order_id>', methods=['DELETE'])
 def cancel_order(order_id):
-    # Return 200 OK for mock order cancellation
     return jsonify({"status": "cancelled", "order_id": order_id}), 200
+
+@sock.route('/ws/market-data')
+def market_data(ws):
+    clients.add(ws)
+    try:
+        while True:
+            # Keep connection alive
+            ws.receive(timeout=1)
+    except Exception:
+        pass
+    finally:
+        clients.discard(ws)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
@@ -79,7 +123,7 @@ with open(os.path.join(build_dir, "app.py"), "w") as f:
 # 4. Create a Dockerfile that starts the python app and exposes port 8080
 # Note: We use Python here for an instant mock response, bypassing C++ compilation overhead for testing
 dockerfile_content = """FROM python:3.12-alpine
-RUN pip install flask
+RUN pip install flask flask-sock
 EXPOSE 8080
 WORKDIR /app
 COPY . .

@@ -1,10 +1,11 @@
-go 1.25.0
+go 1.26.3
 
 use (
 	./pkg
 	./services/api-gateway-go
 	./services/benchmark-orchestrator-go
 	./services/bot-fleet-go
+	./services/correctness-engine-go
 	./services/submission-service-go
 	./services/validation-service-go
 )

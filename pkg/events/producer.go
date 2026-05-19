@@ -93,6 +93,16 @@ func (p *Producer) PublishLeaderboardUpdated(ctx context.Context, event Leaderbo
 	return p.publish(ctx, TopicLeaderboardUpdated, event.BenchmarkID, event)
 }
 
+// PublishTraceAvailable publishes an event when benchmark trace logs are saved.
+func (p *Producer) PublishTraceAvailable(ctx context.Context, event TraceAvailableEvent) error {
+	return p.publish(ctx, TopicTraceAvailable, event.BenchmarkID, event)
+}
+
+// PublishCorrectnessEvaluated publishes an event when correctness has been scored.
+func (p *Producer) PublishCorrectnessEvaluated(ctx context.Context, event CorrectnessEvaluatedEvent) error {
+	return p.publish(ctx, TopicCorrectnessEvaluated, event.BenchmarkID, event)
+}
+
 // PublishAsync queues an event without blocking the caller on broker acknowledgement.
 // Use it for high-frequency, non-critical updates such as telemetry snapshots.
 func (p *Producer) PublishAsync(ctx context.Context, topic string, key string, value interface{}, cb ProduceCallback) error {
