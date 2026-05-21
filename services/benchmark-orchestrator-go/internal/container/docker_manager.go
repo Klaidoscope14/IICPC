@@ -142,7 +142,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 		port := nat.Port(p + "/tcp")
 		exposedPorts[port] = struct{}{}
 		// Let Docker assign a random host port.
-		portBindings[port] = []nat.PortBinding{{HostIP: hostBindIP, HostPort: ""}}
+		portBindings[port] = []nat.PortBinding{{HostIP: hostBindIP, HostPort: "0"}}
 	}
 
 	// Resource limits and Security Options for Sandboxing.
@@ -176,6 +176,7 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 
 	hostConfig := &container.HostConfig{
 		PortBindings:   portBindings,
+		PublishAllPorts: true,
 		Resources:      resources,
 		NetworkMode:    container.NetworkMode(networkMode),
 		RestartPolicy:  container.RestartPolicy{Name: "no"},
@@ -188,13 +189,19 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 		},
 	}
 
+	containerConfig := &container.Config{
+		Image: opts.ImageName,
+		User:  runAsUser,
+	}
+	if len(exposedPorts) > 0 {
+		containerConfig.ExposedPorts = exposedPorts
+	}
+	if len(opts.Cmd) > 0 {
+		containerConfig.Cmd = opts.Cmd
+	}
+
 	resp, err := m.client.ContainerCreate(ctx,
-		&container.Config{
-			Image:        opts.ImageName,
-			ExposedPorts: exposedPorts,
-			Cmd:          opts.Cmd,
-			User:         runAsUser,
-		},
+		containerConfig,
 		hostConfig,
 		nil, nil, opts.ContainerName,
 	)
@@ -216,6 +223,14 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 			if bindings, ok := inspect.NetworkSettings.Ports[port]; ok && len(bindings) > 0 {
 				hostPort = bindings[0].HostPort
 				break
+			}
+		}
+		if hostPort == "" {
+			for _, bindings := range inspect.NetworkSettings.Ports {
+				if len(bindings) > 0 && bindings[0].HostPort != "" {
+					hostPort = bindings[0].HostPort
+					break
+				}
 			}
 		}
 	}

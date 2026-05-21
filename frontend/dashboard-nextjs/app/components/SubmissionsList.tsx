@@ -1,8 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { BarChart3, CheckCircle, Clock } from 'lucide-react'
+import { BarChart3, ChevronRight } from 'lucide-react'
 import { useSubmissions } from '../hooks/useSubmissions'
+import { EmptyState } from './EmptyState'
+import { SubmissionStatusBadge } from './SubmissionStatusBadge'
+import Link from 'next/link'
 
 /**
  * Displays a list of the user's submissions with status indicators.
@@ -16,22 +19,9 @@ export function SubmissionsList() {
     setMyTeamName(localStorage.getItem('iicpc_team_name'))
   }, [])
 
-  /** Capitalize the first letter of a status string. */
-  const formatStatus = (status: string) =>
-    status.charAt(0).toUpperCase() + status.slice(1)
-
-  /** Get the appropriate status badge style. */
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'bg-green-600/20 text-green-400'
-      case 'running':
-      case 'benchmarking':
-        return 'bg-blue-600/20 text-blue-400'
-      default:
-        return 'bg-yellow-600/20 text-yellow-400'
-    }
-  }
+  useEffect(() => {
+    setMyTeamName(localStorage.getItem('iicpc_team_name'))
+  }, [])
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -55,11 +45,16 @@ export function SubmissionsList() {
         )}
 
         {!loading && !error && submissions.length === 0 && (
-          <div className="text-center py-12 text-slate-400">
-            <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-30" />
-            <p className="text-lg font-medium">No submissions yet</p>
-            <p className="text-sm mt-1">Upload your trading engine to get started.</p>
-          </div>
+          <EmptyState
+            icon={<BarChart3 className="h-12 w-12" />}
+            title="No submissions yet"
+            description="Upload your trading engine to get started."
+            action={
+              <Link href="/upload" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                Submit Code
+              </Link>
+            }
+          />
         )}
 
         {!loading && submissions.length > 0 && (
@@ -67,48 +62,43 @@ export function SubmissionsList() {
             {submissions.map((sub) => {
               const isMyTeam = sub.team_name === myTeamName
               return (
-                <div
+                <Link
+                  href={`/submissions/${sub.id}`}
                   key={sub.id}
-                  className={`bg-slate-900/50 rounded-lg border p-6 transition-all ${
+                  className={`block bg-slate-900/50 rounded-lg border p-6 transition-all hover:bg-slate-800/80 ${
                     isMyTeam
-                      ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]'
-                      : 'border-slate-700'
+                      ? 'border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)] hover:border-blue-500'
+                      : 'border-slate-700 hover:border-slate-600'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${getStatusStyle(sub.status)}`}
-                      >
-                        {sub.status === 'completed' ? (
-                          <CheckCircle className="h-4 w-4" />
-                        ) : (
-                          <Clock className="h-4 w-4" />
-                        )}
-                        {formatStatus(sub.status)}
-                      </div>
-                      <span className="text-slate-400 text-sm">{sub.id}</span>
+                    <div className="flex items-center gap-4">
+                      <SubmissionStatusBadge status={sub.status} />
+                      <span className="text-slate-400 font-mono text-sm">{sub.id}</span>
                     </div>
-                    <span className="text-slate-500 text-sm">
-                      {new Date(sub.created_at).toLocaleString()}
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-slate-500 text-sm">
+                        {new Date(sub.created_at).toLocaleString()}
+                      </span>
+                      <ChevronRight className="w-5 h-5 text-slate-600" />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <p className="text-slate-400 text-sm mb-1">Team</p>
-                      <p className="text-white font-medium">{sub.team_name}</p>
+                      <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Team</p>
+                      <p className="text-slate-200 font-medium">{sub.team_name}</p>
                     </div>
                     <div>
-                      <p className="text-slate-400 text-sm mb-1">Language</p>
-                      <p className="text-white font-medium">{sub.language.toUpperCase()}</p>
+                      <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Language</p>
+                      <p className="text-slate-200 font-medium">{sub.language.toUpperCase()}</p>
                     </div>
                     <div>
-                      <p className="text-slate-400 text-sm mb-1">Status</p>
-                      <p className="text-white font-medium">{formatStatus(sub.status)}</p>
+                      <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Version</p>
+                      <p className="text-slate-200 font-medium">v{sub.version || 1}</p>
                     </div>
                   </div>
-                </div>
+                </Link>
               )
             })}
           </div>

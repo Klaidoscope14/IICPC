@@ -66,22 +66,13 @@ func (e *Engine) EvaluateTrace(benchmarkID string, filePath string) (Result, err
 		return Result{}, fmt.Errorf("error reading trace file: %w", err)
 	}
 
-	// Compare expectedFills vs actualFills
-	violations := e.compareFills(benchmarkID, expectedFills, actualFills)
-	
-	// Basic correctness score mapping
-	score := 100.0
-	if totalOrders > 0 {
-		penaltyPerViolation := 100.0 / float64(totalOrders)
-		score -= float64(violations) * penaltyPerViolation
-	}
-	
-	if score < 0 {
-		score = 0
-	}
-	
+	expectedVolume := matchedVolume(expectedFills)
+	actualVolume := reportedMatchedVolume(actualFills)
+	violations := e.compareFills(benchmarkID, expectedVolume, actualVolume)
+
+	score := volumeScore(expectedVolume, actualVolume)
 	if totalOrders == 0 {
-		score = 0 // If no orders were sent, score is 0
+		score = 0
 	}
 
 	return Result{
@@ -90,46 +81,73 @@ func (e *Engine) EvaluateTrace(benchmarkID string, filePath string) (Result, err
 	}, nil
 }
 
-func (e *Engine) compareFills(benchmarkID string, expected []ExpectedMatch, actual []correctness.ExecutionReport) int32 {
+func matchedVolume(expected []ExpectedMatch) int32 {
+	volume := int32(0)
+	for _, match := range expected {
+		volume += match.Qty
+	}
+	return volume
+}
+
+func reportedMatchedVolume(actual []correctness.ExecutionReport) int32 {
+	volume := int32(0)
+	for _, report := range actual {
+		volume += report.FilledQty
+	}
+	return volume / 2
+}
+
+func volumeScore(expectedVolume int32, actualVolume int32) float64 {
+	if expectedVolume == 0 && actualVolume == 0 {
+		return 100
+	}
+
+	denominator := expectedVolume
+	if actualVolume > denominator {
+		denominator = actualVolume
+	}
+	if denominator <= 0 {
+		return 0
+	}
+
+	diff := expectedVolume - actualVolume
+	if diff < 0 {
+		diff = -diff
+	}
+
+	score := 100.0 * (1.0 - float64(diff)/float64(denominator))
+	if score < 0 {
+		return 0
+	}
+	return score
+}
+
+func (e *Engine) compareFills(benchmarkID string, expectedVolume int32, actualVolume int32) int32 {
 	var violations int32
 
 	// This is a simplified comparison for the MVP.
 	// It checks if the total filled quantity matches the expected matched quantity.
 	// A full production engine would do a 1-to-1 match of expected match vs actual execution report.
-	
-	expectedQty := int32(0)
-	for _, m := range expected {
-		// Each match represents a trade between 2 orders, so the total volume matched is m.Qty
-		expectedQty += m.Qty
-	}
-	
-	actualQty := int32(0)
-	for _, a := range actual {
-		// Actual fills are reported per order. We divide by 2 to get the "matched volume"
-		// Assuming both buyer and seller get an execution report.
-		actualQty += a.FilledQty
-	}
-	
-	// If actual qty doesn't equal 2x expected qty, something is wrong.
-	if actualQty != expectedQty*2 {
+
+	if actualVolume != expectedVolume {
 		e.logger.Warn("fill volume mismatch",
 			slog.String("benchmark_id", benchmarkID),
-			slog.Int("expected_volume", int(expectedQty)),
-			slog.Int("actual_reported_volume", int(actualQty/2)),
+			slog.Int("expected_volume", int(expectedVolume)),
+			slog.Int("actual_reported_volume", int(actualVolume)),
 		)
-		
+
 		// Each unmatched unit is a violation
-		diff := expectedQty - (actualQty / 2)
+		diff := expectedVolume - actualVolume
 		if diff < 0 {
 			diff = -diff
 		}
 		violations += diff
 	}
-	
+
 	if violations == 0 {
 		e.logger.Info("trace mathematically perfect", slog.String("benchmark_id", benchmarkID))
 	} else {
-		e.logger.Warn("trace contained correctness violations", 
+		e.logger.Warn("trace contained correctness violations",
 			slog.String("benchmark_id", benchmarkID),
 			slog.Int("violations", int(violations)),
 		)

@@ -115,6 +115,8 @@ type BenchmarkResult struct {
 
 type LeaderboardEntry struct {
 	Rank             int     `json:"rank"`
+	SubmissionID     string  `json:"submission_id,omitempty"`
+	BenchmarkID      string  `json:"benchmark_id,omitempty"`
 	TeamName         string  `json:"team_name"`
 	TPS              float64 `json:"tps"`
 	P50LatencyMs     float64 `json:"p50_latency_ms"`

@@ -89,7 +89,7 @@ func main() {
 				DurationSeconds: int32(cfg.DefaultDurationSeconds),
 				OrdersPerSecond: int32(cfg.DefaultOrdersPerSecond),
 				HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
-				TracesDir:       "../../traces", // Mount this in docker-compose later or use a local folder
+				TracesDir:       cfg.TracesDir,
 			}
 
 			go func() {
@@ -225,7 +225,7 @@ func main() {
 			DurationSeconds: req.Duration,
 			OrdersPerSecond: req.OPS,
 			HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
-			TracesDir:       "../../traces",
+			TracesDir:       cfg.TracesDir,
 		}
 
 		go func() {

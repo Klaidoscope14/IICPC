@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { apiClient } from '../lib/api'
-import type { LeaderboardEntry, Submission } from '../types'
+import useSWR from 'swr'
+import type { BackendLeaderboardEntry, LeaderboardEntry } from '../types'
 
-const POLL_INTERVAL_MS = 30_000
+const POLL_INTERVAL_MS = 10_000 // Poll every 10 seconds for real-time feel
 
 interface UseLeaderboardResult {
   leaderboard: LeaderboardEntry[]
@@ -12,55 +11,28 @@ interface UseLeaderboardResult {
   error: string | null
 }
 
-/**
- * Hook that fetches submissions, computes leaderboard rankings, and polls.
- */
 export function useLeaderboard(): UseLeaderboardResult {
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error, isLoading } = useSWR<{
+    leaderboard?: BackendLeaderboardEntry[] | null
+  }>(
+    '/api/v1/leaderboard',
+    { refreshInterval: POLL_INTERVAL_MS }
+  )
 
-  useEffect(() => {
-    const fetchLeaderboard = async () => {
-      try {
-        const responseData = await apiClient<{ submissions?: Submission[] } | Submission[]>(
-          '/api/v1/submissions'
-        )
-        const submissionsArray = Array.isArray(responseData)
-          ? responseData
-          : (responseData.submissions || [])
+  const leaderboard: LeaderboardEntry[] = (data?.leaderboard || []).map((entry, index) => ({
+    rank: entry.rank || index + 1,
+    submissionId: entry.submission_id,
+    benchmarkId: entry.benchmark_id,
+    team: entry.team_name,
+    tps: entry.tps,
+    latency: entry.p99_latency_ms,
+    correctness: entry.correctness_score,
+    score: entry.composite_score,
+  }))
 
-        // Process submissions with benchmark results into leaderboard entries.
-        const entries = submissionsArray
-          .filter((sub) => sub.benchmark_results && sub.benchmark_results.length > 0)
-          .map((sub) => {
-            const latestResult = sub.benchmark_results![sub.benchmark_results!.length - 1]
-            return {
-              rank: 0,
-              team: sub.team_name,
-              tps: latestResult.metrics?.total_orders_sent || 0,
-              latency: latestResult.metrics?.avg_latency_ms || 0,
-              correctness: latestResult.metrics?.correctness || 0,
-              score: latestResult.score || 0,
-            }
-          })
-          .sort((a, b) => b.score - a.score)
-          .map((entry, index) => ({ ...entry, rank: index + 1 }))
-
-        setLeaderboard(entries)
-        setError(null)
-      } catch (err) {
-        console.error('Failed to fetch leaderboard:', err)
-        setError('Failed to connect to server.')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchLeaderboard()
-    const interval = setInterval(fetchLeaderboard, POLL_INTERVAL_MS)
-    return () => clearInterval(interval)
-  }, [])
-
-  return { leaderboard, loading, error }
+  return { 
+    leaderboard, 
+    loading: isLoading, 
+    error: error ? (error.message || 'Failed to connect to server.') : null 
+  }
 }

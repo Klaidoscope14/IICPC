@@ -64,6 +64,14 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
 
     shouldConnect.current = true
     setError(null)
+    setConnected(false)
+    setMetrics(null)
+    setMetricsHistory([])
+
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
 
     const url = `${WS_BASE_URL}/ws/benchmarks/${benchmarkId}/stream`
 

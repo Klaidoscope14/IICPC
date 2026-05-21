@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { apiClient } from '../lib/api'
+import useSWR from 'swr'
 import type { Submission } from '../types'
 
-const POLL_INTERVAL_MS = 30_000
+const POLL_INTERVAL_MS = 10_000
 
 interface UseSubmissionsResult {
   submissions: Submission[]
@@ -12,38 +11,19 @@ interface UseSubmissionsResult {
   error: string | null
 }
 
-/**
- * Hook that fetches and polls submissions from the API.
- * Returns submissions, loading state, and any error message.
- */
 export function useSubmissions(): UseSubmissionsResult {
-  const [submissions, setSubmissions] = useState<Submission[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error, isLoading } = useSWR<{ submissions?: Submission[] } | Submission[]>(
+    '/api/v1/submissions',
+    { refreshInterval: POLL_INTERVAL_MS }
+  )
 
-  useEffect(() => {
-    const fetchSubmissions = async () => {
-      try {
-        const responseData = await apiClient<{ submissions?: Submission[] } | Submission[]>(
-          '/api/v1/submissions'
-        )
-        const submissionsArray = Array.isArray(responseData)
-          ? responseData
-          : (responseData.submissions || [])
-        setSubmissions(submissionsArray)
-        setError(null)
-      } catch (err) {
-        console.error('Failed to fetch submissions:', err)
-        setError('Failed to connect to submission service.')
-      } finally {
-        setLoading(false)
-      }
-    }
+  const submissions = data 
+    ? (Array.isArray(data) ? data : (data.submissions || []))
+    : []
 
-    fetchSubmissions()
-    const interval = setInterval(fetchSubmissions, POLL_INTERVAL_MS)
-    return () => clearInterval(interval)
-  }, [])
-
-  return { submissions, loading, error }
+  return { 
+    submissions, 
+    loading: isLoading, 
+    error: error ? (error.message || 'Failed to connect to submission service.') : null 
+  }
 }

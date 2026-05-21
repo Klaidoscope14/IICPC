@@ -67,7 +67,15 @@ func NewReverseProxy(target string, opts ...Option) (*ReverseProxy, error) {
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteHTTPError(w, r, http.StatusBadGateway, contractapi.ErrorServiceUnavailable, p.serviceName+" unavailable")
 	}
-	rp.ModifyResponse = p.normalizeBackendError
+	rp.ModifyResponse = func(resp *http.Response) error {
+		// Strip CORS headers set by upstream services to prevent
+		// duplication with the gateway's own CORS middleware.
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Expose-Headers")
+		return p.normalizeBackendError(resp)
+	}
 	p.proxy = rp
 
 	return p, nil

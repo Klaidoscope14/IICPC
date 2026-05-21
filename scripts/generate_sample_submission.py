@@ -88,6 +88,7 @@ def health():
     return jsonify({"status": "healthy", "service": "test-engine"}), 200
 
 @app.route('/api/orders', methods=['POST'])
+@app.route('/api/v1/orders', methods=['POST'])
 def create_order():
     data = request.json or {}
     order_id = str(uuid.uuid4())
@@ -99,6 +100,7 @@ def create_order():
     return jsonify({"status": "created", "order_id": order_id}), 201
 
 @app.route('/api/orders/<order_id>', methods=['DELETE'])
+@app.route('/api/v1/orders/<order_id>', methods=['DELETE'])
 def cancel_order(order_id):
     return jsonify({"status": "cancelled", "order_id": order_id}), 200
 
@@ -127,7 +129,7 @@ RUN pip install flask flask-sock
 EXPOSE 8080
 WORKDIR /app
 COPY . .
-HEALTHCHECK --interval=3s --timeout=2s CMD wget -qO- http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=3s --timeout=2s CMD wget -qO- http://127.0.0.1:8080/health || exit 1
 CMD ["python", "app.py"]
 """
 with open(os.path.join(build_dir, "Dockerfile"), "w") as f:

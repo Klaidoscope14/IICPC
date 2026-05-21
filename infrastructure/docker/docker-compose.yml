@@ -238,6 +238,7 @@ services:
       SUBMISSION_SERVICE_URL: http://submission-service:8080
       VALIDATION_SERVICE_URL: http://validation-service:8084
       ORCHESTRATOR_URL: http://benchmark-orchestrator:8081
+      BOT_FLEET_URL: http://bot-fleet:8085
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-600}
       MAX_BODY_SIZE_MB: ${MAX_BODY_SIZE_MB:-64}
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
@@ -246,6 +247,60 @@ services:
       - "${API_GATEWAY_PORT:-8082}:8082"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  bot-fleet:
+    build:
+      context: ../..
+      dockerfile: services/bot-fleet-go/Dockerfile
+    image: iicpc/bot-fleet:local
+    container_name: iicpc-bot-fleet
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "8085"
+      REDPANDA_BROKERS: redpanda:9092
+      BOT_CONCURRENCY: ${BOT_CONCURRENCY:-100}
+      DEFAULT_DURATION_SECONDS: ${DEFAULT_DURATION_SECONDS:-30}
+      DEFAULT_ORDERS_PER_SECOND: ${DEFAULT_ORDERS_PER_SECOND:-50}
+      BOT_HTTP_TIMEOUT_MS: ${BOT_HTTP_TIMEOUT_MS:-2000}
+      TRACES_DIR: /app/traces
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${BOT_FLEET_PORT:-8085}:8085"
+    volumes:
+      - traces-data:/app/traces
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  correctness-engine:
+    build:
+      context: ../..
+      dockerfile: services/correctness-engine-go/Dockerfile
+    image: iicpc/correctness-engine:local
+    container_name: iicpc-correctness-engine
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      PORT: "8086"
+      REDPANDA_BROKERS: redpanda:9092
+      TRACES_DIR: /app/traces
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${CORRECTNESS_ENGINE_PORT:-8086}:8086"
+    volumes:
+      - traces-data:/app/traces:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/health >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -269,7 +324,7 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 >/dev/null"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000 >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 12
@@ -318,3 +373,4 @@ volumes:
   prometheus-data:
   grafana-data:
   submission-storage:
+  traces-data:

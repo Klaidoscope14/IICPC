@@ -23,6 +23,7 @@ export function SubmissionForm() {
     teamName: '',
     language: 'cpp',
     dockerfile: '',
+    benchmarkPreset: 'medium',
   })
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -99,6 +100,7 @@ export function SubmissionForm() {
       form.append('team_name', formData.teamName)
       form.append('language', formData.language)
       form.append('dockerfile', formData.dockerfile || '')
+      form.append('benchmark_preset', formData.benchmarkPreset || 'medium')
       form.append('code_archive', selectedFile)
 
       const result = await apiClient<{ id: string }>('/api/v1/submissions', {
@@ -113,7 +115,7 @@ export function SubmissionForm() {
       localStorage.setItem('iicpc_team_name', formData.teamName)
 
       // Reset form.
-      setFormData({ contestantId: '', teamName: '', language: 'cpp', dockerfile: '' })
+      setFormData({ contestantId: '', teamName: '', language: 'cpp', dockerfile: '', benchmarkPreset: 'medium' })
       setSelectedFile(null)
     } catch (error) {
       const errorMessage =
@@ -201,6 +203,24 @@ export function SubmissionForm() {
               className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
               placeholder={'FROM ubuntu:22.04\nRUN apt-get update && apt-get install -y build-essential\nCOPY . /app\nWORKDIR /app\nRUN make\nCMD [./exchange]'}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Benchmark Preset
+            </label>
+            <select
+              id="preset-select"
+              value={formData.benchmarkPreset}
+              onChange={(e) => updateField('benchmarkPreset', e.target.value)}
+              className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="low">Low Volatility (1k OPS)</option>
+              <option value="medium">Medium Market Traffic (10k OPS)</option>
+              <option value="high">High-Frequency Burst (50k OPS)</option>
+              <option value="chaos">Market Open Chaos (100k OPS)</option>
+              <option value="stress">Stress Overload (Max Concurrency)</option>
+            </select>
           </div>
 
           <div>

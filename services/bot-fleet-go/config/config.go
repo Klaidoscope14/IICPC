@@ -22,6 +22,9 @@ type Config struct {
 	// Per-bot HTTP timeout in milliseconds
 	BotHTTPTimeoutMs int
 
+	// Shared trace output path consumed by the correctness engine
+	TracesDir string
+
 	// Log level
 	LogLevel string
 }
@@ -40,6 +43,7 @@ func Load() *Config {
 		DefaultDurationSeconds: getEnvInt("DEFAULT_DURATION_SECONDS", 30),
 		DefaultOrdersPerSecond: getEnvInt("DEFAULT_ORDERS_PER_SECOND", 50),
 		BotHTTPTimeoutMs:       getEnvInt("BOT_HTTP_TIMEOUT_MS", 2000),
+		TracesDir:              getEnv("TRACES_DIR", "/app/traces"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 	}
 }

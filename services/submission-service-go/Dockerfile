@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
@@ -8,6 +8,8 @@ COPY services/api-gateway-go/go.mod services/api-gateway-go/go.sum ./services/ap
 COPY services/benchmark-orchestrator-go/go.mod services/benchmark-orchestrator-go/go.sum ./services/benchmark-orchestrator-go/
 COPY services/submission-service-go/go.mod services/submission-service-go/go.sum ./services/submission-service-go/
 COPY services/validation-service-go/go.mod services/validation-service-go/go.sum ./services/validation-service-go/
+COPY services/bot-fleet-go/go.mod services/bot-fleet-go/go.sum ./services/bot-fleet-go/
+COPY services/correctness-engine-go/go.mod services/correctness-engine-go/go.sum ./services/correctness-engine-go/
 RUN go work sync
 
 WORKDIR /src

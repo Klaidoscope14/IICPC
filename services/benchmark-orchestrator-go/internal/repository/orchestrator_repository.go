@@ -523,17 +523,20 @@ func (r *postgresRepository) UpdateCorrectnessScore(ctx context.Context, benchma
 func (r *postgresRepository) GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error) {
 	query := `
 		SELECT
-			team_name,
-			tps,
-			p50_latency_ms,
-			p90_latency_ms,
-			p99_latency_ms,
-			correctness_score,
-			total_orders,
-			failed_orders,
-			composite_score
-		FROM leaderboard
-		ORDER BY rank ASC
+			br.submission_id,
+			br.benchmark_id,
+			s.team_name,
+			br.tps,
+			br.p50_latency_ms,
+			br.p90_latency_ms,
+			br.p99_latency_ms,
+			br.correctness_score,
+			br.total_orders,
+			br.failed_orders,
+			br.composite_score
+		FROM benchmark_results br
+		JOIN submissions s ON s.id = br.submission_id
+		ORDER BY br.composite_score DESC, br.tps DESC, br.p99_latency_ms ASC
 		LIMIT $1
 	`
 
@@ -548,6 +551,7 @@ func (r *postgresRepository) GetLeaderboard(ctx context.Context, limit int) ([]*
 	for rows.Next() {
 		var e domain.LeaderboardEntry
 		err := rows.Scan(
+			&e.SubmissionID, &e.BenchmarkID,
 			&e.TeamName, &e.TPS,
 			&e.P50LatencyMs, &e.P90LatencyMs, &e.P99LatencyMs,
 			&e.CorrectnessScore, &e.TotalOrders, &e.FailedOrders,

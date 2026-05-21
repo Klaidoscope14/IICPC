@@ -1044,6 +1044,8 @@ func toContractLeaderboard(entries []*domain.LeaderboardEntry) []contractbenchma
 		}
 		out = append(out, contractbenchmark.LeaderboardEntry{
 			Rank:             entry.Rank,
+			SubmissionID:     entry.SubmissionID,
+			BenchmarkID:      entry.BenchmarkID,
 			TeamName:         entry.TeamName,
 			TPS:              entry.TPS,
 			P50LatencyMs:     entry.P50LatencyMs,

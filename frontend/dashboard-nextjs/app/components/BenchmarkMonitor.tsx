@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Activity, Radio, AlertCircle, TrendingUp, Clock, Zap, BarChart3 } from 'lucide-react'
 import { useBenchmarkStream } from '../hooks/useBenchmarkStream'
+import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts'
 
 /**
  * Live benchmark monitoring dashboard with real-time metrics.
@@ -18,10 +19,25 @@ export function BenchmarkMonitor() {
   const [inputId, setInputId] = useState('')
   const { metrics, metricsHistory, connected, error, connect, disconnect } = useBenchmarkStream(benchmarkId || null)
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const initialBenchmarkId = params.get('benchmarkId')
+    if (initialBenchmarkId) {
+      setInputId(initialBenchmarkId)
+      setBenchmarkId(initialBenchmarkId)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!benchmarkId) return
+
+    connect()
+    return () => disconnect()
+  }, [benchmarkId, connect, disconnect])
+
   const handleConnect = () => {
     if (inputId.trim()) {
       setBenchmarkId(inputId.trim())
-      setTimeout(connect, 100)
     }
   }
 
@@ -191,19 +207,6 @@ function MetricCard({ icon, label, value, unit, color, sparklineData }: MetricCa
 }
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const width = 200
-  const height = 30
-  const max = Math.max(...data, 1)
-  const min = Math.min(...data, 0)
-  const range = max - min || 1
-
-  const points = data.map((v, i) => ({
-    x: (i / (data.length - 1)) * width,
-    y: height - ((v - min) / range) * height,
-  }))
-
-  const pathData = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-
   const colorMap: Record<string, string> = {
     yellow: '#facc15',
     blue: '#60a5fa',
@@ -211,10 +214,24 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
     red: '#f87171',
   }
 
+  const chartData = data.map((value, index) => ({ index, value }))
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-8 mt-2">
-      <path d={pathData} fill="none" stroke={colorMap[color] || '#94a3b8'} strokeWidth="2" />
-    </svg>
+    <div className="w-full h-12 mt-2">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={chartData}>
+          <YAxis domain={['dataMin', 'dataMax']} hide />
+          <Line 
+            type="monotone" 
+            dataKey="value" 
+            stroke={colorMap[color] || '#94a3b8'} 
+            strokeWidth={2} 
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 

@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Trophy } from 'lucide-react'
+import Link from 'next/link'
+import { Activity, Trophy } from 'lucide-react'
 import { useLeaderboard } from '../hooks/useLeaderboard'
 
 /**
@@ -60,6 +61,7 @@ export function Leaderboard() {
                     Correctness (%)
                   </th>
                   <th className="text-right py-3 px-4 text-slate-400 font-medium">Score</th>
+                  <th className="text-right py-3 px-4 text-slate-400 font-medium">Live</th>
                 </tr>
               </thead>
               <tbody>
@@ -67,7 +69,7 @@ export function Leaderboard() {
                   const isMyTeam = entry.team === myTeamName
                   return (
                     <tr
-                      key={entry.rank}
+                      key={entry.benchmarkId || `${entry.team}-${entry.rank}`}
                       className={`border-b transition-colors ${
                         isMyTeam
                           ? 'bg-blue-900/40 border-blue-500/50 hover:bg-blue-900/60'
@@ -101,6 +103,19 @@ export function Leaderboard() {
                         <span className="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">
                           {entry.score.toFixed(1)}
                         </span>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        {entry.benchmarkId ? (
+                          <Link
+                            href={`/monitor?benchmarkId=${entry.benchmarkId}`}
+                            title="Open live monitor"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-600/20 text-blue-400 transition-colors hover:bg-blue-600/30"
+                          >
+                            <Activity className="h-4 w-4" />
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-slate-500">--</span>
+                        )}
                       </td>
                     </tr>
                   )
