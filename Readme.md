@@ -72,6 +72,10 @@ Validation Engine
         ↓
 Leaderboard & Analytics
 ```
+---
+
+<img width="1536" height="1024" alt="architecture_IICPC" src="https://github.com/user-attachments/assets/ae3b1a6e-49a9-4408-ac8c-606182f4a8e2" />
+
 
 ---
 
