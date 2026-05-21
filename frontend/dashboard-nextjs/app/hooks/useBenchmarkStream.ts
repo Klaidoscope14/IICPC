@@ -2,7 +2,21 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8081'
+import { apiClient } from '../lib/api'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+
+function toWebSocketBaseUrl(httpBaseUrl: string): string {
+  try {
+    const url = new URL(httpBaseUrl)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    return url.origin
+  } catch {
+    return 'ws://localhost:8082'
+  }
+}
+
+const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || toWebSocketBaseUrl(API_BASE_URL)
 const RECONNECT_DELAY_MS = 3000
 const MAX_RECONNECT_ATTEMPTS = 5
 
@@ -47,7 +61,7 @@ interface UseBenchmarkStreamResult {
 /**
  * WebSocket hook for streaming real-time benchmark telemetry.
  *
- * Connects to ws://localhost:8081/ws/benchmarks/:id/stream
+ * Connects to {WS_BASE_URL}/ws/benchmarks/:id/stream
  * and receives JSON snapshots every second.
  */
 export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStreamResult {
@@ -59,7 +73,7 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
   const reconnectAttempts = useRef(0)
   const shouldConnect = useRef(false)
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!benchmarkId) return
 
     shouldConnect.current = true
@@ -67,6 +81,15 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
     setConnected(false)
     setMetrics(null)
     setMetricsHistory([])
+
+    try {
+      // Fetch initial benchmark state to populate config, status, etc.
+      const initialData = await apiClient<BenchmarkMetrics>(`/api/v1/benchmarks/${benchmarkId}`)
+      setMetrics(initialData)
+      setMetricsHistory([initialData])
+    } catch (err) {
+      console.warn('Failed to fetch initial benchmark state:', err)
+    }
 
     if (wsRef.current) {
       wsRef.current.close()
@@ -92,6 +115,17 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
           // Check for benchmark ended event.
           if (data.event === 'benchmark_ended') {
             shouldConnect.current = false
+            setMetrics(prev => prev ? { ...prev, status: 'completed' } : prev)
+            return
+          }
+
+          if (data.event === 'benchmark_started') {
+            setMetrics(prev => prev ? {
+              ...prev,
+              status: 'running',
+              started_at: data.data.started_at,
+              config: data.data.config
+            } : null)
             return
           }
 
@@ -101,8 +135,29 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
             return
           }
 
-          setMetrics(data)
-          setMetricsHistory(prev => [...prev.slice(-120), data]) // Keep last 2 minutes.
+          // Handle TelemetrySnapshotEvent
+          if (data.metrics) {
+            setMetrics(prev => {
+              if (!prev) return null // Wait for initial state fetch
+              const timestamp = data.timestamp ? new Date(data.timestamp).getTime() : Date.now()
+              const startedAt = new Date(prev.started_at).getTime()
+              const elapsed = Math.max(0, Math.floor((timestamp - startedAt) / 1000))
+              
+              const updated = {
+                ...prev,
+                elapsed_time: elapsed > prev.elapsed_time ? elapsed : prev.elapsed_time,
+                metrics: { ...prev.metrics, ...data.metrics }
+              }
+              return updated
+            })
+
+            setMetricsHistory(prev => {
+              const last = prev[prev.length - 1]
+              if (!last) return prev
+              const updated = { ...last, metrics: { ...last.metrics, ...data.metrics } }
+              return [...prev.slice(-119), updated]
+            })
+          }
         } catch {
           setError('Failed to parse metrics data')
         }

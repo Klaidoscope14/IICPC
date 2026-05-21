@@ -10,6 +10,8 @@ COPY services/submission-service-go/go.mod services/submission-service-go/go.sum
 COPY services/validation-service-go/go.mod services/validation-service-go/go.sum ./services/validation-service-go/
 COPY services/bot-fleet-go/go.mod services/bot-fleet-go/go.sum ./services/bot-fleet-go/
 COPY services/correctness-engine-go/go.mod services/correctness-engine-go/go.sum ./services/correctness-engine-go/
+COPY services/websocket-service-go/go.mod ./services/websocket-service-go/
+RUN apk add --no-cache git
 RUN go work sync
 
 WORKDIR /src

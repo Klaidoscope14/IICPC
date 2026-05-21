@@ -132,9 +132,6 @@ func main() {
 	// Register routes.
 	orchestratorHandler.RegisterRoutes(router)
 
-	wsHandler := handler.NewWebSocketHandler(orchestratorService, logger)
-	wsHandler.RegisterRoutes(router)
-
 	router.GET("/health", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 750*time.Millisecond)
 		defer cancel()

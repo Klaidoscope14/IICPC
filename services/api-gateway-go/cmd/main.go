@@ -48,6 +48,11 @@ func main() {
 		log.Fatalf("Failed to create bot-fleet proxy: %v", err)
 	}
 
+	wsProxy, err := proxy.NewReverseProxy(cfg.WebSocketServiceURL, proxy.WithServiceName("websocket-service"))
+	if err != nil {
+		log.Fatalf("Failed to create websocket-service proxy: %v", err)
+	}
+
 	// Set up router with middleware.
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -121,7 +126,7 @@ func main() {
 	}
 
 	// WebSocket passthrough.
-	router.Any("/ws/*path", orchestratorProxy.Handler())
+	router.Any("/ws/*path", wsProxy.Handler())
 
 	// Health check.
 	router.GET("/health", func(c *gin.Context) {
@@ -130,6 +135,7 @@ func main() {
 			"validation-service":     cfg.ValidationServiceURL,
 			"benchmark-orchestrator": cfg.OrchestratorURL,
 			"bot-fleet":              cfg.BotFleetURL,
+			"websocket-service":      cfg.WebSocketServiceURL,
 		})
 		status := "healthy"
 		httpStatus := http.StatusOK
