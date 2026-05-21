@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// OrderProfile dictates the probability distribution of order types and sides.
+type OrderProfile struct {
+	LimitWeight  int
+	MarketWeight int
+	CancelWeight int
+	BuyWeight    int // Out of 100
+}
+
 // Symbol is a trading pair traded by bots.
 type Symbol string
 
@@ -40,13 +48,17 @@ type Order struct {
 
 var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-// LimitOrder generates a limit order.
-func LimitOrder() Order {
-	sym := symbols[rng.Intn(len(symbols))]
-	side := SideBuy
-	if rng.Intn(2) == 1 {
-		side = SideSell
+func getSide(buyWeight int) Side {
+	if rng.Intn(100) < buyWeight {
+		return SideBuy
 	}
+	return SideSell
+}
+
+// LimitOrder generates a limit order.
+func LimitOrder(buyWeight int) Order {
+	sym := symbols[rng.Intn(len(symbols))]
+	side := getSide(buyWeight)
 	basePrice := 100.0 + rng.Float64()*900.0
 	price := float64(int(basePrice*100)) / 100 // round to 2dp
 	qty := 1 + rng.Intn(100)
@@ -61,12 +73,9 @@ func LimitOrder() Order {
 }
 
 // MarketOrder generates a market order.
-func MarketOrder() Order {
+func MarketOrder(buyWeight int) Order {
 	sym := symbols[rng.Intn(len(symbols))]
-	side := SideBuy
-	if rng.Intn(2) == 1 {
-		side = SideSell
-	}
+	side := getSide(buyWeight)
 	qty := 1 + rng.Intn(50)
 
 	return Order{
@@ -85,15 +94,20 @@ func CancelOrder() Order {
 	}
 }
 
-// RandomOrder returns a random order type with realistic weights:
-// 50% limit, 30% market, 20% cancel.
-func RandomOrder() Order {
-	n := rng.Intn(100)
+// RandomOrder returns an order based on the provided profile weights.
+func RandomOrder(profile OrderProfile) Order {
+	totalWeight := profile.LimitWeight + profile.MarketWeight + profile.CancelWeight
+	if totalWeight <= 0 {
+		// Fallback if bad profile
+		return LimitOrder(50)
+	}
+
+	n := rng.Intn(totalWeight)
 	switch {
-	case n < 50:
-		return LimitOrder()
-	case n < 80:
-		return MarketOrder()
+	case n < profile.LimitWeight:
+		return LimitOrder(profile.BuyWeight)
+	case n < profile.LimitWeight+profile.MarketWeight:
+		return MarketOrder(profile.BuyWeight)
 	default:
 		return CancelOrder()
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/iicpc/bot-fleet-go/config"
+	"github.com/iicpc/bot-fleet-go/internal/bot"
 	"github.com/iicpc/bot-fleet-go/internal/fleet"
 	"github.com/iicpc/bot-fleet-go/internal/telemetry"
 	contractbenchmark "github.com/iicpc/pkg/contracts/benchmark"
@@ -61,35 +62,63 @@ func main() {
 
 	runner := fleet.NewRunner(logger, onSnapshot)
 
-	// Redpanda consumer: listens for deployment.ready events.
+	// Redpanda consumer: listens for benchmark.started events.
 	consumer, err := events.NewConsumerWithOptions(
 		cfg.RedpandaBrokers,
 		"bot-fleet-group",
-		[]string{events.TopicEngineReady},
+		[]string{events.TopicBenchmarkStarted},
 		logger,
 		events.ConsumerOptions{PartitionConcurrency: 4},
 	)
 	if err != nil {
 		logger.Warn("failed to connect to redpanda consumer, bot fleet will not auto-start", slog.String("error", err.Error()))
 	} else {
-		events.RegisterJSONHandler[events.EngineReadyEvent](consumer, events.TopicEngineReady, func(ctx context.Context, key string, event events.EngineReadyEvent) error {
-			logger.Info("engine ready event received, spawning bot fleet",
+		events.RegisterJSONHandler[events.BenchmarkStartedEvent](consumer, events.TopicBenchmarkStarted, func(ctx context.Context, key string, event events.BenchmarkStartedEvent) error {
+			logger.Info("benchmark started event received, spawning bot fleet",
+				slog.String("benchmark_id", event.BenchmarkID),
 				slog.String("submission_id", event.SubmissionID),
-				slog.String("deployment_id", event.DeploymentID),
 				slog.String("service_url", event.ServiceURL),
 			)
 
-			benchmarkID := uuid.New().String()
+			// Parse custom config
+			var orderProfile bot.OrderProfile
+			botCount := cfg.DefaultBotConcurrency
+			duration := int32(cfg.DefaultDurationSeconds)
+			ops := int32(cfg.DefaultOrdersPerSecond)
+
+			presetName := event.Config.Preset
+			if presetName != "" && presetName != "custom" {
+				p := fleet.GetPreset(presetName)
+				botCount = p.BotConcurrency
+				duration = p.DurationSeconds
+				ops = p.OrdersPerSecond
+				orderProfile = p.Profile
+			} else if presetName == "custom" {
+				// Use values from config if custom
+				if event.Config.BotCount > 0 {
+					botCount = int(event.Config.BotCount)
+				}
+				if event.Config.DurationSeconds > 0 {
+					duration = event.Config.DurationSeconds
+				}
+				if event.Config.OrdersPerSecond > 0 {
+					ops = event.Config.OrdersPerSecond
+				}
+				orderProfile = fleet.DefaultProfile
+			} else {
+				orderProfile = fleet.DefaultProfile
+			}
 
 			runCfg := fleet.RunConfig{
-				BenchmarkID:     benchmarkID,
+				BenchmarkID:     event.BenchmarkID,
 				SubmissionID:    event.SubmissionID,
 				ServiceURL:      event.ServiceURL,
-				BotConcurrency:  cfg.DefaultBotConcurrency,
-				DurationSeconds: int32(cfg.DefaultDurationSeconds),
-				OrdersPerSecond: int32(cfg.DefaultOrdersPerSecond),
+				BotConcurrency:  botCount,
+				DurationSeconds: duration,
+				OrdersPerSecond: ops,
 				HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
 				TracesDir:       cfg.TracesDir,
+				OrderProfile:    orderProfile,
 			}
 
 			go func() {
@@ -103,28 +132,28 @@ func main() {
 				defer cancel()
 
 				finishedEvent := events.BenchmarkFinishedEvent{
-					BenchmarkID:    benchmarkID,
+					BenchmarkID:    event.BenchmarkID,
 					SubmissionID:   event.SubmissionID,
-					TPS:            float64(finalMetrics.TotalOrdersSent) / float64(cfg.DefaultDurationSeconds),
+					TPS:            float64(finalMetrics.TotalOrdersSent) / float64(duration),
 					P99LatencyMs:   finalMetrics.P99LatencyMs,
-					ElapsedSeconds: int64(cfg.DefaultDurationSeconds),
+					ElapsedSeconds: int64(duration),
 					FinishedAt:     time.Now().UTC(),
 				}
 				if err := producer.PublishBenchmarkFinished(pubCtx, finishedEvent); err != nil {
 					logger.Warn("failed to publish benchmark.completed event",
-						slog.String("benchmark_id", benchmarkID),
+						slog.String("benchmark_id", event.BenchmarkID),
 						slog.String("error", err.Error()),
 					)
 				} else {
 					logger.Info("benchmark.completed event published",
-						slog.String("benchmark_id", benchmarkID),
+						slog.String("benchmark_id", event.BenchmarkID),
 						slog.String("submission_id", event.SubmissionID),
 					)
 				}
 
 				if runResult.TracePath != "" {
 					traceEvent := events.TraceAvailableEvent{
-						BenchmarkID: benchmarkID,
+						BenchmarkID: event.BenchmarkID,
 						FilePath:    runResult.TracePath,
 						CreatedAt:   time.Now().UTC(),
 					}
@@ -194,8 +223,11 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+
+		var orderProfile bot.OrderProfile = fleet.DefaultProfile
 		if req.Preset != "" {
 			p := fleet.GetPreset(req.Preset)
+			orderProfile = p.Profile
 			if req.BotCount == 0 {
 				req.BotCount = p.BotConcurrency
 			}
@@ -226,6 +258,7 @@ func main() {
 			OrdersPerSecond: req.OPS,
 			HTTPTimeoutMs:   cfg.BotHTTPTimeoutMs,
 			TracesDir:       cfg.TracesDir,
+			OrderProfile:    orderProfile,
 		}
 
 		go func() {
@@ -256,4 +289,3 @@ func main() {
 		log.Fatalf("bot-fleet server error: %v", err)
 	}
 }
-

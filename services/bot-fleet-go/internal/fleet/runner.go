@@ -20,6 +20,7 @@ type RunConfig struct {
 	OrdersPerSecond int32
 	HTTPTimeoutMs   int
 	TracesDir       string
+	OrderProfile    bot.OrderProfile
 }
 
 // FinalMetrics is returned when the run completes.
@@ -110,6 +111,7 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) RunResult {
 			InterRequestDelay: interRequestDelay,
 			HTTPTimeoutMs:     cfg.HTTPTimeoutMs,
 			TraceLogger:       traceLogger,
+			OrderProfile:      cfg.OrderProfile,
 		}
 		go func(wcfg bot.WorkerConfig) {
 			defer wg.Done()

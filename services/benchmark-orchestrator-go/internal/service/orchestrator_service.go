@@ -364,10 +364,25 @@ func (s *orchestratorService) StartBenchmark(ctx context.Context, submissionID, 
 		eventCtx, eventCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer eventCancel()
 
+		s.mu.Lock()
+		serviceURL := ""
+		if state, ok := s.deployments[deploymentID]; ok {
+			serviceURL = state.ServiceURL
+		}
+		s.mu.Unlock()
+
+		if serviceURL == "" {
+			deployment, _ := s.repo.GetDeploymentByID(ctx, deploymentID)
+			if deployment != nil {
+				serviceURL = deployment.ServiceURL
+			}
+		}
+
 		if err := s.eventProducer.PublishBenchmarkStarted(eventCtx, events.BenchmarkStartedEvent{
 			BenchmarkID:  benchmark.ID,
 			SubmissionID: submissionID,
 			DeploymentID: deploymentID,
+			ServiceURL:   serviceURL,
 			Config:       toContractBenchmarkConfig(config),
 			StartedAt:    benchmark.StartedAt,
 		}); err != nil {

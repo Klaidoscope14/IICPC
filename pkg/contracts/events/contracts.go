@@ -76,6 +76,7 @@ type BenchmarkStartedEvent struct {
 	BenchmarkID  string           `json:"benchmark_id"`
 	SubmissionID string           `json:"submission_id"`
 	DeploymentID string           `json:"deployment_id"`
+	ServiceURL   string           `json:"service_url"`
 	Config       benchmark.Config `json:"config,omitempty"`
 	StartedAt    time.Time        `json:"started_at"`
 }
