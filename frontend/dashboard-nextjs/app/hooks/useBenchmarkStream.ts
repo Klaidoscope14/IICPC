@@ -89,6 +89,9 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
       setMetricsHistory([initialData])
     } catch (err) {
       console.warn('Failed to fetch initial benchmark state:', err)
+      setError('No valid submission found with this ID.')
+      shouldConnect.current = false
+      return
     }
 
     if (wsRef.current) {
