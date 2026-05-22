@@ -252,7 +252,7 @@ export function SubmissionForm() {
               />
               {selectedFile && (
                 <div className="mt-4 text-sm text-green-400">
-                  Selected: {selectedFile.name} 
+                  Selected: {selectedFile.name} ({selectedFile.size === 0 ? '0KB' : selectedFile.size < 1024 ? '<1KB' : `${Math.round(selectedFile.size / 1024)}KB`} size)
                 </div>
               )}
             </div>
