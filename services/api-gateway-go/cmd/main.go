@@ -21,11 +21,24 @@ import (
 	"github.com/iicpc/pkg/metrics"
 	"github.com/iicpc/pkg/middleware"
 	"github.com/iicpc/pkg/server"
+	"github.com/iicpc/pkg/telemetry"
 )
 
 func main() {
 	cfg := config.Load()
 	logger := logging.NewLogger("api-gateway")
+
+	// Initialize OpenTelemetry Tracer
+	tp, err := telemetry.InitTracerProvider("api-gateway")
+	if err != nil {
+		logger.Warn("Failed to initialize telemetry", "error", err)
+	} else {
+		defer func() {
+			if err := tp.Shutdown(context.Background()); err != nil {
+				logger.Error("Error shutting down tracer provider", "error", err)
+			}
+		}()
+	}
 
 	// Create reverse proxies for backend services.
 	submissionProxy, err := proxy.NewReverseProxy(cfg.SubmissionServiceURL, proxy.WithServiceName("submission-service"))
@@ -57,6 +70,7 @@ func main() {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.Use(gin.Recovery())
+	router.Use(telemetry.Middleware("api-gateway")) // OpenTelemetry Trace Middleware
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestLogger(logger))

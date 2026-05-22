@@ -26,6 +26,7 @@ type OrchestratorService interface {
 	StopBenchmark(ctx context.Context, benchmarkID string) error
 	ProcessBenchmarkFinished(ctx context.Context, evt events.BenchmarkFinishedEvent) error
 	ProcessCorrectnessEvaluated(ctx context.Context, evt events.CorrectnessEvaluatedEvent) error
+	ProcessTelemetrySnapshot(ctx context.Context, evt events.TelemetrySnapshotEvent) error
 	GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error)
 }
 
@@ -349,10 +350,8 @@ func (s *orchestratorService) StartBenchmark(ctx context.Context, submissionID, 
 		return nil, fmt.Errorf("%w: %v", domain.ErrInternal, err)
 	}
 
-	// Create a cancellable context for the benchmark goroutine.
-	benchCtx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
-	s.cancelFns[benchmark.ID] = cancel
+	s.cancelFns[benchmark.ID] = func() {} // stub to avoid nil map
 	s.mu.Unlock()
 
 	s.logger.Info("benchmark started",
@@ -392,8 +391,6 @@ func (s *orchestratorService) StartBenchmark(ctx context.Context, submissionID, 
 			)
 		}
 	}
-
-	go s.simulateBenchmark(benchCtx, benchmark.ID, config)
 
 	return benchmark, nil
 }
@@ -553,6 +550,10 @@ func (s *orchestratorService) ProcessBenchmarkFinished(ctx context.Context, evt 
 		s.logger.Warn("failed to create parent benchmark row (might already exist)", slog.String("error", err.Error()))
 	}
 
+	if err := s.repo.CompleteBenchmark(ctx, evt.BenchmarkID, evt.ElapsedSeconds); err != nil {
+		s.logger.Error("failed to mark benchmark complete in DB", slog.String("error", err.Error()))
+	}
+
 	result := &domain.BenchmarkResult{
 		ID:               uuid.New().String(),
 		SubmissionID:     evt.SubmissionID,
@@ -576,6 +577,20 @@ func (s *orchestratorService) ProcessBenchmarkFinished(ctx context.Context, evt 
 	s.logger.Info("created benchmark result from external bot-fleet event", slog.String("benchmark_id", evt.BenchmarkID))
 	s.publishLeaderboardUpdated(ctx, evt.BenchmarkID)
 	return nil
+}
+
+func (s *orchestratorService) ProcessTelemetrySnapshot(ctx context.Context, evt events.TelemetrySnapshotEvent) error {
+	metrics := domain.TelemetryMetrics{
+		CurrentTPS:              evt.Metrics.CurrentTPS,
+		AvgLatencyMs:            evt.Metrics.AvgLatencyMs,
+		P50LatencyMs:            evt.Metrics.P50LatencyMs,
+		P90LatencyMs:            evt.Metrics.P90LatencyMs,
+		P99LatencyMs:            evt.Metrics.P99LatencyMs,
+		TotalOrdersSent:         evt.Metrics.TotalOrdersSent,
+		TotalOrdersAcknowledged: evt.Metrics.TotalOrdersAcknowledged,
+		TotalErrors:             evt.Metrics.TotalErrors,
+	}
+	return s.repo.InsertTelemetrySnapshot(ctx, evt.BenchmarkID, &metrics)
 }
 
 func (s *orchestratorService) ProcessCorrectnessEvaluated(ctx context.Context, evt events.CorrectnessEvaluatedEvent) error {

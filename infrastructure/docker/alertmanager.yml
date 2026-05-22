@@ -1,0 +1,10 @@
+route:
+  group_by: ['alertname', 'service']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+
+receivers:
+  - name: 'default-receiver'
+    # By default, we are just logging the alerts. In production, configure slack_configs or email_configs here.

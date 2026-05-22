@@ -19,6 +19,7 @@ import (
 	"github.com/iicpc/pkg/metrics"
 	"github.com/iicpc/pkg/middleware"
 	"github.com/iicpc/pkg/server"
+	"github.com/iicpc/pkg/telemetry"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
@@ -30,6 +31,18 @@ func main() {
 	}
 
 	logger := logging.NewLogger("benchmark-orchestrator")
+
+	// Initialize OpenTelemetry Tracer
+	tp, err := telemetry.InitTracerProvider("benchmark-orchestrator")
+	if err != nil {
+		logger.Warn("Failed to initialize telemetry", "error", err)
+	} else {
+		defer func() {
+			if err := tp.Shutdown(context.Background()); err != nil {
+				logger.Error("Error shutting down tracer provider", "error", err)
+			}
+		}()
+	}
 
 	// Connect to PostgreSQL.
 	db, err := sqlx.Connect("postgres", cfg.Database.DSN())
@@ -78,7 +91,7 @@ func main() {
 	consumer, err := events.NewConsumerWithOptions(
 		cfg.Redpanda.Brokers,
 		"orchestrator-group",
-		[]string{events.TopicValidationCompleted, events.TopicCorrectnessEvaluated, events.TopicBenchmarkFinished},
+		[]string{events.TopicValidationCompleted, events.TopicCorrectnessEvaluated, events.TopicBenchmarkFinished, events.TopicEngineReady, events.TopicTelemetrySnapshot},
 		logger,
 		events.ConsumerOptions{PartitionConcurrency: 8},
 	)
@@ -109,6 +122,23 @@ func main() {
 			return orchestratorService.ProcessBenchmarkFinished(ctx, event)
 		})
 
+		// Register engine ready handler
+		events.RegisterJSONHandler[events.EngineReadyEvent](consumer, events.TopicEngineReady, func(ctx context.Context, key string, event events.EngineReadyEvent) error {
+			logger.Info("Received engine ready event, starting benchmark", "deployment_id", event.DeploymentID)
+			config := domain.BenchmarkConfig{
+				BotCount:        10,
+				DurationSeconds: 60,
+				OrdersPerSecond: 100,
+			}
+			_, err := orchestratorService.StartBenchmark(ctx, event.SubmissionID, event.DeploymentID, config)
+			return err
+		})
+
+		// Register telemetry snapshot handler
+		events.RegisterJSONHandler[events.TelemetrySnapshotEvent](consumer, events.TopicTelemetrySnapshot, func(ctx context.Context, key string, event events.TelemetrySnapshotEvent) error {
+			return orchestratorService.ProcessTelemetrySnapshot(ctx, event)
+		})
+
 		// Start consumer in background
 		go func() {
 			if err := consumer.Start(context.Background()); err != nil {
@@ -120,6 +150,7 @@ func main() {
 
 	// Set up router with middleware.
 	router := gin.Default()
+	router.Use(telemetry.Middleware("benchmark-orchestrator"))
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestLogger(logger))

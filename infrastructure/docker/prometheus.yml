@@ -2,6 +2,15 @@ global:
   scrape_interval: 5s
   evaluation_interval: 5s
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - 'alertmanager:9093'
+
+rule_files:
+  - "rules.yml"
+
 scrape_configs:
   - job_name: 'submission-service'
     static_configs:
@@ -16,4 +25,24 @@ scrape_configs:
   - job_name: 'api-gateway'
     static_configs:
       - targets: ['api-gateway:8082']
+    metrics_path: /metrics
+
+  - job_name: 'validation-service'
+    static_configs:
+      - targets: ['validation-service:8084']
+    metrics_path: /metrics
+
+  - job_name: 'bot-fleet'
+    static_configs:
+      - targets: ['bot-fleet:8085']
+    metrics_path: /metrics
+
+  - job_name: 'correctness-engine'
+    static_configs:
+      - targets: ['correctness-engine:8086']
+    metrics_path: /metrics
+
+  - job_name: 'websocket-service'
+    static_configs:
+      - targets: ['websocket-service:8087']
     metrics_path: /metrics

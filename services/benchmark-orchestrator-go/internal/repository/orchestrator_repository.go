@@ -264,15 +264,31 @@ func (r *postgresRepository) CreateBenchmark(ctx context.Context, b *domain.Benc
 
 func (r *postgresRepository) GetBenchmarkByID(ctx context.Context, id string) (*domain.Benchmark, error) {
 	query := `
-		SELECT id, submission_id, deployment_id, status, config, started_at, completed_at, elapsed_seconds, error_message
-		FROM benchmarks
-		WHERE id = $1
+		SELECT b.id, b.submission_id, b.deployment_id, b.status, b.config, b.started_at, b.completed_at, b.elapsed_seconds, b.error_message,
+			COALESCE(r.tps, m.current_tps), m.avg_latency_ms, m.p50_latency_ms, m.p90_latency_ms, m.p99_latency_ms,
+			m.total_orders_sent, m.total_orders_acknowledged, m.total_errors, m.active_connections,
+			m.cpu_usage_percent, m.memory_usage_mb
+		FROM benchmarks b
+		LEFT JOIN LATERAL (
+			SELECT current_tps, avg_latency_ms, p50_latency_ms, p90_latency_ms, p99_latency_ms,
+				total_orders_sent, total_orders_acknowledged, total_errors, active_connections,
+				cpu_usage_percent, memory_usage_mb
+			FROM telemetry_snapshots
+			WHERE benchmark_id = b.id
+			ORDER BY timestamp DESC
+			LIMIT 1
+		) m ON true
+		LEFT JOIN benchmark_results r ON r.benchmark_id = b.id
+		WHERE b.id = $1
 	`
 
 	var b domain.Benchmark
 	var configJSON []byte
 	var completedAt sql.NullTime
 	var errMsg sql.NullString
+	var currentTPS, avgLatencyMs, p50LatencyMs, p90LatencyMs, p99LatencyMs sql.NullFloat64
+	var totalSent, totalAcked, totalErrors, activeConnections sql.NullInt64
+	var cpuUsage, memoryUsage sql.NullFloat64
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&b.ID,
@@ -284,6 +300,17 @@ func (r *postgresRepository) GetBenchmarkByID(ctx context.Context, id string) (*
 		&completedAt,
 		&b.ElapsedTime,
 		&errMsg,
+		&currentTPS,
+		&avgLatencyMs,
+		&p50LatencyMs,
+		&p90LatencyMs,
+		&p99LatencyMs,
+		&totalSent,
+		&totalAcked,
+		&totalErrors,
+		&activeConnections,
+		&cpuUsage,
+		&memoryUsage,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -297,6 +324,39 @@ func (r *postgresRepository) GetBenchmarkByID(ctx context.Context, id string) (*
 	}
 	if errMsg.Valid {
 		b.ErrorMessage = errMsg.String
+	}
+	if currentTPS.Valid {
+		b.Metrics.CurrentTPS = currentTPS.Float64
+	}
+	if avgLatencyMs.Valid {
+		b.Metrics.AvgLatencyMs = avgLatencyMs.Float64
+	}
+	if p50LatencyMs.Valid {
+		b.Metrics.P50LatencyMs = p50LatencyMs.Float64
+	}
+	if p90LatencyMs.Valid {
+		b.Metrics.P90LatencyMs = p90LatencyMs.Float64
+	}
+	if p99LatencyMs.Valid {
+		b.Metrics.P99LatencyMs = p99LatencyMs.Float64
+	}
+	if totalSent.Valid {
+		b.Metrics.TotalOrdersSent = int32(totalSent.Int64)
+	}
+	if totalAcked.Valid {
+		b.Metrics.TotalOrdersAcknowledged = int32(totalAcked.Int64)
+	}
+	if totalErrors.Valid {
+		b.Metrics.TotalErrors = int32(totalErrors.Int64)
+	}
+	if activeConnections.Valid {
+		b.Metrics.ActiveConnections = int32(activeConnections.Int64)
+	}
+	if cpuUsage.Valid {
+		b.Metrics.CPUUsagePercent = cpuUsage.Float64
+	}
+	if memoryUsage.Valid {
+		b.Metrics.MemoryUsageMB = memoryUsage.Float64
 	}
 
 	if len(configJSON) > 0 {

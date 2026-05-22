@@ -13,6 +13,7 @@ import (
 	"github.com/iicpc/pkg/metrics"
 	"github.com/iicpc/pkg/middleware"
 	"github.com/iicpc/pkg/server"
+	"github.com/iicpc/pkg/telemetry"
 	"github.com/iicpc/submission-service-go/config"
 	"github.com/iicpc/submission-service-go/internal/handler"
 	"github.com/iicpc/submission-service-go/internal/publisher"
@@ -31,6 +32,18 @@ func main() {
 	}
 
 	logger := logging.NewLogger("submission-service")
+
+	// Initialize OpenTelemetry Tracer
+	tp, err := telemetry.InitTracerProvider("submission-service")
+	if err != nil {
+		logger.Warn("Failed to initialize telemetry", "error", err)
+	} else {
+		defer func() {
+			if err := tp.Shutdown(context.Background()); err != nil {
+				logger.Error("Error shutting down tracer provider", "error", err)
+			}
+		}()
+	}
 
 	db, err := sqlx.Connect("postgres", cfg.Database.DSN())
 	if err != nil {
@@ -81,6 +94,7 @@ func main() {
 
 	// Set up router with middleware.
 	router := gin.Default()
+	router.Use(telemetry.Middleware("submission-service"))
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestLogger(logger))
