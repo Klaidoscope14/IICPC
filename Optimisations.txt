@@ -1,0 +1,67 @@
+I analyzed the modified codebase against the measured logs/traces we extracted earlier. The main conclusion is the same but sharper now: validation and Redpanda event flow are not the biggest latency problem. The biggest reducible latency is in Docker build/deploy/readiness, bot-fleet measurement overhead, WebSocket/event fanout robustness, and the C++ matching-engine hot path.
+
+Current measured baseline from local traces/logs: warm upload → engine ready is around 1.8-2.4s; cold/cache-miss paths spike to 5-19s; benchmark request p99 is around 385-551ms.
+
+Highest Impact
+
+Cache or skip repeated Docker builds.
+Current builds always create a fresh image tag in orchestrator_service.go (line 127). Use checksum-based image names, skip build when checksum already exists, enable BuildKit cache mounts, and prebuild common base layers. This directly attacks the 4s-18s cold spikes.
+
+Speed up container readiness detection.
+Health probing waits on a fixed 500ms ticker and performs Docker inspect every probe in docker_manager.go (line 327). Start with 50-100ms probes, exponential backoff, avoid inspect on every loop, and use Docker health status when present.
+
+Decouple Redpanda consumers from long Docker builds.
+Validation event handlers currently trigger build/deploy inline from the consumer path. Move builds to a bounded worker pool so Kafka consumption/commit stays fast under multiple submissions.
+
+Fix bot fleet pacing.
+Workers use time.NewTicker and then block on HTTP send in worker.go (line 34). This can under-drive target OPS. Use a shared token-bucket rate limiter or scheduled dispatch loop, prewarm connections, and avoid the forced 100ms drain wait in runner.go (line 138).
+
+Fix WebSocket hub blocking/deadlock risk.
+The hub sends to h.unregister from inside the same hub goroutine while handling broadcast in hub.go (line 88). That can freeze real-time updates. Remove clients inline or use a buffered/nonblocking unregister path. Also make Broadcast drop/coalesce telemetry when the channel is full.
+
+Backend / Infra
+6. Use separate Redpanda producer profiles.
+Critical events use sync publish but share 5ms linger and compression in producer.go (line 28). Use no-linger/no-compression for lifecycle events; keep batching/compression for telemetry.
+
+Add DB pool settings everywhere.
+Services call sqlx.Connect but do not tune SetMaxOpenConns, SetMaxIdleConns, or connection lifetime, e.g. benchmark main (line 35). This can add connection churn under load.
+
+Add benchmark_results(benchmark_id) index.
+Correctness updates query/update by benchmark_id in orchestrator_repository.go (line 495), but init SQL only indexes leaderboard score ordering in init.sql (line 270).
+
+Remove correctness race sleep.
+ProcessCorrectnessEvaluated can sleep up to 5 seconds waiting for result creation in orchestrator_service.go (line 591). Use an upsert placeholder or transactional event/result creation.
+
+Cache gateway health checks.
+/health pings every backend on every request in api-gateway main (line 132). Cache dependency health for 1-2 seconds to avoid accidental slow health checks.
+
+Reduce logging during benchmark.
+Container stdout/stderr is logged line-by-line at info level in docker_manager.go (line 309). Use bounded ring buffers, sampling, or debug-only runtime logs.
+
+Switch all Gin services to release mode + gin.New.
+Some services still use gin.Default(), which adds default logging. API gateway is cleaner; orchestrator/websocket should follow.
+
+Submission / Validation
+13. Keep the streaming upload path; it is good.
+Upload validation and storage are piped in submission_service.go (line 205), which is the right design.
+
+Fix repository transaction executor bug.
+insertSubmission accepts an executor but uses r.db.ExecContext instead of exec.ExecContext in submission_repository.go (line 70). This is more correctness/concurrency than latency, but worth fixing.
+
+Optimize validation extraction only after bigger items.
+Validation already does a single workspace pass in workspace.go (line 80). Later improvements: avoid double ZIP scan, parallel extraction for large archives, and reuse larger buffers.
+
+C++ Engine Hot Path
+16. Replace std::function callbacks in MatchingEngine.h (line 28) with an interface/template sink to allow inlining.
+
+Replace single-threaded atomics in MatchingEngine.h (line 115) with plain counters when engine ownership is serialized.
+
+Reuse scratch vectors instead of allocating std::vector<Trade> per order in MatchingEngine.cpp (line 82), and reuse candidate buffers in MatchingEngine.cpp (line 400).
+
+Replace ExecutionResult.message std::string with enum or const char* in Order.h (line 187).
+
+Remove duplicate price-level lookups and system_clock::now() from mutation callbacks in MatchingEngine.cpp (line 589).
+
+Avoid global shared_mutex + string lookup per order in Exchange.cpp (line 32). Use symbol IDs and per-engine ownership/queues.
+
+Use C++20 + -O3 -march=native -flto instead of C++17 / -O2 in CMakeLists.txt (line 9).
