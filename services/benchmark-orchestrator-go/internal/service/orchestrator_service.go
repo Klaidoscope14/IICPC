@@ -112,9 +112,44 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 		return nil, fmt.Errorf("%w: submission_id is required", domain.ErrInvalidInput)
 	}
 
-	storagePath, err := s.repo.GetSubmissionStoragePath(ctx, submissionID)
+	storagePath, checksum, err := s.repo.GetSubmissionBuildInputs(ctx, submissionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get storage path: %w", err)
+		return nil, fmt.Errorf("failed to get submission build inputs: %w", err)
+	}
+
+	imageName := buildImageName(submissionID, checksum)
+
+	// For now we assume a standard set of ports and limits as defined by the platform.
+	// In the real system, these would be read from the contract or validation event.
+	ports := []string{"8080"}
+	limits := domain.ResourceLimits{CPUMilli: 1000, MemoryMB: 512, TimeoutSeconds: int64(s.opts.DeployTimeout.Seconds())}
+
+	if s.containerMgr == nil {
+		s.logger.Warn("docker manager unavailable, skipping image build and creating simulated deployment",
+			slog.String("submission_id", submissionID),
+		)
+		s.recordSubmissionLog(context.Background(), submissionID, "build", "warn", "Docker manager unavailable; deployment will be simulated.", map[string]string{
+			"image": imageName,
+		})
+		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
+	}
+
+	if exists, inspectErr := s.containerMgr.ImageExists(ctx, imageName); inspectErr != nil {
+		s.logger.Warn("failed to inspect cached image, falling back to docker build",
+			slog.String("submission_id", submissionID),
+			slog.String("image", imageName),
+			slog.String("error", inspectErr.Error()),
+		)
+	} else if exists {
+		s.logger.Info("reusing cached docker image",
+			slog.String("submission_id", submissionID),
+			slog.String("image", imageName),
+		)
+		s.recordSubmissionLog(context.Background(), submissionID, "build", "info", "Reused cached Docker image for identical submission archive.", map[string]string{
+			"image":    imageName,
+			"checksum": checksum,
+		})
+		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
 	}
 
 	tempFile, err := os.CreateTemp("", fmt.Sprintf("deploy-%s-*.zip", shortID(submissionID)))
@@ -132,23 +167,6 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 	tarBuf, err := container.ConvertZipToTar(tempZipPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert zip to tar: %w", err)
-	}
-
-	imageName := fmt.Sprintf("submission-%s:%d", shortID(submissionID), time.Now().UnixNano())
-
-	// For now we assume a standard set of ports and limits as defined by the platform.
-	// In the real system, these would be read from the contract or validation event.
-	ports := []string{"8080"}
-	limits := domain.ResourceLimits{CPUMilli: 1000, MemoryMB: 512, TimeoutSeconds: int64(s.opts.DeployTimeout.Seconds())}
-
-	if s.containerMgr == nil {
-		s.logger.Warn("docker manager unavailable, skipping image build and creating simulated deployment",
-			slog.String("submission_id", submissionID),
-		)
-		s.recordSubmissionLog(context.Background(), submissionID, "build", "warn", "Docker manager unavailable; deployment will be simulated.", map[string]string{
-			"image": imageName,
-		})
-		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
 	}
 
 	s.logger.Info("building docker image", slog.String("submission_id", submissionID), slog.String("image", imageName))
@@ -260,12 +278,12 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		}
 
 		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
-		
+
 		// Capture container logs asynchronously.
 		if err := s.containerMgr.CaptureLogs(context.Background(), containerID, s.logger); err != nil {
 			s.logger.Warn("failed to capture container logs", slog.String("error", err.Error()))
 		}
-		
+
 		s.recordSubmissionLog(context.Background(), submissionID, "runtime", "info", "Container started and passed readiness check.", map[string]string{
 			"deployment_id": deploymentID,
 			"container_id":  containerID,
@@ -554,26 +572,59 @@ func (s *orchestratorService) ProcessBenchmarkFinished(ctx context.Context, evt 
 		s.logger.Error("failed to mark benchmark complete in DB", slog.String("error", err.Error()))
 	}
 
+	p50Latency := evt.P50LatencyMs
+	if p50Latency <= 0 && evt.P99LatencyMs > 0 {
+		p50Latency = evt.P99LatencyMs * 0.5
+	}
+	p90Latency := evt.P90LatencyMs
+	if p90Latency <= 0 && evt.P99LatencyMs > 0 {
+		p90Latency = evt.P99LatencyMs * 0.8
+	}
+	totalOrders := evt.TotalOrders
+	if totalOrders <= 0 {
+		totalOrders = int32(evt.TPS * float64(evt.ElapsedSeconds))
+	}
+	failedOrders := evt.FailedOrders
+
+	correctnessScore := evt.CorrectnessScore
+	if existing, err := s.repo.GetBenchmarkResult(ctx, evt.BenchmarkID); err == nil && existing.CorrectnessScore > correctnessScore {
+		correctnessScore = existing.CorrectnessScore
+	}
+
+	compositeScore := evt.CompositeScore
+	if compositeScore == 0 && correctnessScore > 0 {
+		metrics := domain.TelemetryMetrics{
+			CurrentTPS:              evt.TPS,
+			P50LatencyMs:            p50Latency,
+			P90LatencyMs:            p90Latency,
+			P99LatencyMs:            evt.P99LatencyMs,
+			TotalOrdersSent:         totalOrders,
+			TotalOrdersAcknowledged: totalOrders - failedOrders,
+			TotalErrors:             failedOrders,
+		}
+		compositeScore = s.scoring.ComputeScore(metrics) * (correctnessScore / 100.0)
+	}
+
 	result := &domain.BenchmarkResult{
 		ID:               uuid.New().String(),
 		SubmissionID:     evt.SubmissionID,
 		BenchmarkID:      evt.BenchmarkID,
 		TPS:              evt.TPS,
-		P50LatencyMs:     evt.P99LatencyMs * 0.5, // approximate since bot-fleet doesn't send p50 in this event yet
-		P90LatencyMs:     evt.P99LatencyMs * 0.8,
+		P50LatencyMs:     p50Latency,
+		P90LatencyMs:     p90Latency,
 		P99LatencyMs:     evt.P99LatencyMs,
-		CorrectnessScore: 0,
-		TotalOrders:      int32(evt.TPS * float64(evt.ElapsedSeconds)),
-		FailedOrders:     0,
-		CompositeScore:   0,
+		CorrectnessScore: correctnessScore,
+		TotalOrders:      totalOrders,
+		FailedOrders:     failedOrders,
+		CompositeScore:   compositeScore,
 		CreatedAt:        time.Now(),
 	}
-	
+
 	if err := s.repo.UpsertBenchmarkResult(ctx, result); err != nil {
 		s.logger.Error("failed to upsert benchmark result", slog.String("error", err.Error()))
 		return err
 	}
-	
+
 	s.logger.Info("created benchmark result from external bot-fleet event", slog.String("benchmark_id", evt.BenchmarkID))
 	s.publishLeaderboardUpdated(ctx, evt.BenchmarkID)
 	return nil
@@ -600,18 +651,24 @@ func (s *orchestratorService) ProcessCorrectnessEvaluated(ctx context.Context, e
 		slog.Int("violations", int(evt.TotalViolations)),
 	)
 
-	// Fetch existing result (with retry to handle async race condition where correctness finishes before orchestrator's 15s loop)
-	var result *domain.BenchmarkResult
-	var err error
-	for i := 0; i < 5; i++ {
-		result, err = s.repo.GetBenchmarkResult(ctx, evt.BenchmarkID)
-		if err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
+	// Fetch existing result. If correctness wins the event race, create a
+	// placeholder tied to the benchmark row instead of sleeping for seconds.
+	result, err := s.repo.GetBenchmarkResult(ctx, evt.BenchmarkID)
 	if err != nil {
-		return fmt.Errorf("failed to get benchmark result after retries: %w", err)
+		benchmark, benchmarkErr := s.repo.GetBenchmarkByID(ctx, evt.BenchmarkID)
+		if benchmarkErr != nil {
+			return fmt.Errorf("failed to get benchmark result or parent benchmark: %w", err)
+		}
+		result = &domain.BenchmarkResult{
+			ID:               uuid.New().String(),
+			SubmissionID:     benchmark.SubmissionID,
+			BenchmarkID:      evt.BenchmarkID,
+			CorrectnessScore: evt.CorrectnessScore,
+			CreatedAt:        time.Now(),
+		}
+		if upsertErr := s.repo.UpsertBenchmarkResult(ctx, result); upsertErr != nil {
+			return fmt.Errorf("failed to create correctness placeholder result: %w", upsertErr)
+		}
 	}
 
 	// Re-calculate the base score based on the original result metrics
@@ -947,6 +1004,37 @@ func shortID(value string) string {
 	return value[:8]
 }
 
+func buildImageName(submissionID string, checksum string) string {
+	tagSource := strings.ToLower(strings.TrimSpace(checksum))
+	if tagSource == "" {
+		tagSource = shortID(submissionID)
+	}
+
+	var tag strings.Builder
+	tag.Grow(len(tagSource))
+	for _, r := range tagSource {
+		switch {
+		case r >= 'a' && r <= 'z':
+			tag.WriteRune(r)
+		case r >= '0' && r <= '9':
+			tag.WriteRune(r)
+		case r == '_' || r == '.' || r == '-':
+			tag.WriteRune(r)
+		default:
+			tag.WriteByte('-')
+		}
+		if tag.Len() >= 64 {
+			break
+		}
+	}
+
+	value := strings.Trim(tag.String(), ".-")
+	if value == "" {
+		value = shortID(submissionID)
+	}
+	return "iicpc/submission:" + value
+}
+
 func minDuration(a, b time.Duration) time.Duration {
 	if a <= 0 {
 		return b
@@ -998,8 +1086,12 @@ func (s *orchestratorService) publishBenchmarkFinished(ctx context.Context, benc
 		SubmissionID:     benchmark.SubmissionID,
 		CompositeScore:   result.CompositeScore,
 		TPS:              result.TPS,
+		P50LatencyMs:     result.P50LatencyMs,
+		P90LatencyMs:     result.P90LatencyMs,
 		P99LatencyMs:     result.P99LatencyMs,
 		CorrectnessScore: result.CorrectnessScore,
+		TotalOrders:      result.TotalOrders,
+		FailedOrders:     result.FailedOrders,
 		ElapsedSeconds:   elapsed,
 		FinishedAt:       time.Now().UTC(),
 	})

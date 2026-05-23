@@ -4,10 +4,10 @@
 
 namespace bot_engine {
 
-BotWorker::BotWorker(int worker_id, const BotConfig& config, SubmitFunc submit_fn)
+BotWorker::BotWorker(int worker_id, const BotConfig& config)
     : worker_id_(worker_id)
     , config_(config)
-    , submit_fn_(std::move(submit_fn))
+    , http_client_(config.target_url)
     , generator_(config)
 {}
 
@@ -26,7 +26,7 @@ void BotWorker::run() {
         auto order = generator_.generate();
         auto start = std::chrono::steady_clock::now();
 
-        auto result = submit_fn_(order);
+        auto result = http_client_.post_order(order);
 
         orders_sent_++;
         if (result.success) {

@@ -65,3 +65,9 @@ Remove duplicate price-level lookups and system_clock::now() from mutation callb
 Avoid global shared_mutex + string lookup per order in Exchange.cpp (line 32). Use symbol IDs and per-engine ownership/queues.
 
 Use C++20 + -O3 -march=native -flto instead of C++17 / -O2 in CMakeLists.txt (line 9).
+
+Top 4 Highest-Impact Items (do these first)
+Cache Docker builds (#1) — The image tag uses time.Now().UnixNano() so identical submissions always rebuild. Use the existing SHA-256 checksum as the tag. Saves 4–18s.
+Remove correctness sleep (#9) — A time.Sleep(1s) × 5 retry loop blocks the consumer goroutine. Saves 0–5s.
+Fix WebSocket hub deadlock (#5) — Confirmed: unbuffered unregister channel send from inside broadcast case with RLock held. Can freeze all real-time updates.
+Fix submission repo tx bug (#14) — insertSubmission uses r.db.ExecContext instead of exec.ExecContext, bypassing the transaction.

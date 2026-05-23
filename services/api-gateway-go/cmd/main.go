@@ -142,15 +142,17 @@ func main() {
 	// WebSocket passthrough.
 	router.Any("/ws/*path", wsProxy.Handler())
 
+	backendChecker := newCachedBackendChecker(map[string]string{
+		"submission-service":     cfg.SubmissionServiceURL,
+		"validation-service":     cfg.ValidationServiceURL,
+		"benchmark-orchestrator": cfg.OrchestratorURL,
+		"bot-fleet":              cfg.BotFleetURL,
+		"websocket-service":      cfg.WebSocketServiceURL,
+	}, time.Second)
+
 	// Health check.
 	router.GET("/health", func(c *gin.Context) {
-		checks := checkBackends(c.Request.Context(), map[string]string{
-			"submission-service":     cfg.SubmissionServiceURL,
-			"validation-service":     cfg.ValidationServiceURL,
-			"benchmark-orchestrator": cfg.OrchestratorURL,
-			"bot-fleet":              cfg.BotFleetURL,
-			"websocket-service":      cfg.WebSocketServiceURL,
-		})
+		checks := backendChecker.Check(c.Request.Context())
 		status := "healthy"
 		httpStatus := http.StatusOK
 		for _, checkStatus := range checks {
@@ -186,6 +188,42 @@ func main() {
 
 	fmt.Printf("API Gateway listening on :%s\n", cfg.Port)
 	server.RunGracefully(srv, "api-gateway")
+}
+
+type cachedBackendChecker struct {
+	backends map[string]string
+	ttl      time.Duration
+
+	mu      sync.Mutex
+	expires time.Time
+	checks  map[string]string
+}
+
+func newCachedBackendChecker(backends map[string]string, ttl time.Duration) *cachedBackendChecker {
+	return &cachedBackendChecker{
+		backends: cloneStringMap(backends),
+		ttl:      ttl,
+	}
+}
+
+func (c *cachedBackendChecker) Check(ctx context.Context) map[string]string {
+	now := time.Now()
+	c.mu.Lock()
+	if c.checks != nil && now.Before(c.expires) {
+		checks := cloneStringMap(c.checks)
+		c.mu.Unlock()
+		return checks
+	}
+	c.mu.Unlock()
+
+	checks := checkBackends(ctx, c.backends)
+
+	c.mu.Lock()
+	c.checks = cloneStringMap(checks)
+	c.expires = now.Add(c.ttl)
+	c.mu.Unlock()
+
+	return checks
 }
 
 func checkBackends(parent context.Context, backends map[string]string) map[string]string {
@@ -230,4 +268,12 @@ func backendHealth(ctx context.Context, baseURL string) string {
 		return fmt.Sprintf("http_%d", resp.StatusCode)
 	}
 	return "ok"
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

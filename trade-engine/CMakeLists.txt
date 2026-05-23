@@ -6,7 +6,7 @@ endif()
 
 project(IICPC_trade_engine_simple VERSION 1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # ============================================================================
@@ -19,10 +19,11 @@ find_package(Threads REQUIRED)
 # COMPILER FLAGS
 # ============================================================================
 if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /DNDEBUG")
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG")
-    add_compile_options(/W4)
 else()
-    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG")
 endif()
 
 # ============================================================================
@@ -35,7 +36,7 @@ set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     abseil_cpp
     GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-    GIT_TAG        20240116.2
+    GIT_TAG        20250512.0
 )
 FetchContent_MakeAvailable(abseil_cpp)
 
@@ -76,6 +77,11 @@ add_library(iicpc_engine_lib
 )
 target_include_directories(iicpc_engine_lib PUBLIC include)
 target_link_libraries(iicpc_engine_lib PUBLIC Threads::Threads absl::flat_hash_map absl::btree)
+if(MSVC)
+    target_compile_options(iicpc_engine_lib PRIVATE /W4)
+else()
+    target_compile_options(iicpc_engine_lib PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 # ============================================================================
 # EXECUTABLE

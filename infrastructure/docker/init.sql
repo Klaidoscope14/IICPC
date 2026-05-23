@@ -270,6 +270,9 @@ CREATE INDEX IF NOT EXISTS idx_benchmarks_status_started
 CREATE INDEX IF NOT EXISTS idx_benchmark_results_score
     ON benchmark_results(composite_score DESC, tps DESC, p99_latency_ms ASC);
 
+CREATE INDEX IF NOT EXISTS idx_benchmark_results_benchmark
+    ON benchmark_results(benchmark_id);
+
 CREATE INDEX IF NOT EXISTS idx_benchmark_history_submission_created
     ON benchmark_history(submission_id, created_at DESC);
 

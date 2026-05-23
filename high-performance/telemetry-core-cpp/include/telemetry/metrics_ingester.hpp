@@ -5,6 +5,8 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <vector>
+#include <mutex>
 
 namespace telemetry {
 
@@ -38,6 +40,9 @@ private:
     std::atomic<int64_t> metrics_count_{0};
     std::thread server_thread_;
     int server_fd_{-1};
+
+    std::vector<std::thread> client_threads_;
+    std::mutex threads_mutex_;
 
     void run();
     void handle_client(int client_fd);

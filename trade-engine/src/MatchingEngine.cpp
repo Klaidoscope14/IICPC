@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <limits>
+#include <absl/container/inlined_vector.h>
 
 namespace Mercury {
 
@@ -103,7 +104,8 @@ namespace Mercury {
 
         // If order still has remaining quantity, add to book (GTC behavior)
         if (order.quantity > 0) {
-            if (!orderBook_.addOrder(order)) {
+            auto state = orderBook_.addOrder(order);
+            if (!state) {
                 // Pool exhausted or internal failure - remainder cannot rest.
                 // Preserve any fills we already produced but mark the rest
                 // as rejected so the caller sees an accurate picture.
@@ -112,7 +114,7 @@ namespace Mercury {
                 result.message = "Failed to rest order in book (pool exhausted)";
                 return result;
             }
-            notifyBookMutation(order.side, order.price, BookDeltaAction::Upsert);
+            notifyBookMutation(order.side, order.price, state->quantity, state->orderCount, BookDeltaAction::Upsert);
 
             if (result.hasFills()) {
                 result.status = ExecutionStatus::PartialFill;
@@ -210,8 +212,10 @@ namespace Mercury {
         const uint64_t remainingQuantity = existingOrder->quantity;
 
         // Remove the order
-        orderBook_.removeOrder(existingOrder);
-        notifyBookMutation(side, price, BookDeltaAction::Remove);
+        auto state = orderBook_.removeOrder(existingOrder);
+        if (state) {
+            notifyBookMutation(side, price, state->quantity, state->orderCount, BookDeltaAction::Remove);
+        }
 
         result.status = ExecutionStatus::Cancelled;
         result.remainingQuantity = remainingQuantity;
@@ -272,8 +276,10 @@ namespace Mercury {
         }
 
         // Remove the original order
-        orderBook_.removeOrder(existingOrder);
-        notifyBookMutation(originalSide, originalPrice, BookDeltaAction::Remove);
+        auto rmState = orderBook_.removeOrder(existingOrder);
+        if (rmState) {
+            notifyBookMutation(originalSide, originalPrice, rmState->quantity, rmState->orderCount, BookDeltaAction::Remove);
+        }
 
         // Re-submit with new timestamp (loses time priority)
         modifiedOrder.timestamp = getTimestamp();
@@ -300,7 +306,8 @@ namespace Mercury {
             }
         } else {
             // Just add to book
-            if (!orderBook_.addOrder(modifiedOrder)) {
+            auto state = orderBook_.addOrder(modifiedOrder);
+            if (!state) {
                 // Original was already removed above; we cannot re-rest it.
                 // Report as a rejected modify so the client sees the loss.
                 result.status = ExecutionStatus::Rejected;
@@ -309,7 +316,7 @@ namespace Mercury {
                 result.message = "Modify failed: could not re-rest order (pool exhausted)";
                 return result;
             }
-            notifyBookMutation(modifiedOrder.side, modifiedOrder.price, BookDeltaAction::Upsert);
+            notifyBookMutation(modifiedOrder.side, modifiedOrder.price, state->quantity, state->orderCount, BookDeltaAction::Upsert);
             result.status = ExecutionStatus::Modified;
             result.remainingQuantity = modifiedOrder.quantity;
             result.message = "Order modified successfully";
@@ -397,8 +404,7 @@ namespace Mercury {
             uint64_t id;
             uint64_t clientId;
         };
-        std::vector<Candidate> ordersToProcess;
-        ordersToProcess.reserve(std::min(level->size(), size_t(32)));
+        absl::InlinedVector<Candidate, 32> ordersToProcess;
 
         {
             MERCURY_BENCH_SCOPE(Mercury::BenchTiming::Category::PriceLevelIteration);
@@ -483,12 +489,14 @@ namespace Mercury {
             }
             if (fillQty == restingQuantity) {
                 // Fully filled - remove from book
-                orderBook_.removeOrder(liveNode);
-                notifyBookMutation(restingSide, priceLevel, BookDeltaAction::Remove);
+                if (auto state = orderBook_.removeOrder(liveNode)) {
+                    notifyBookMutation(restingSide, priceLevel, state->quantity, state->orderCount, BookDeltaAction::Remove);
+                }
             } else {
                 // Partially filled - update quantity
-                orderBook_.updateOrderQuantity(liveNode, restingQuantity - fillQty);
-                notifyBookMutation(restingSide, priceLevel, BookDeltaAction::Upsert);
+                if (auto state = orderBook_.updateOrderQuantity(liveNode, restingQuantity - fillQty)) {
+                    notifyBookMutation(restingSide, priceLevel, state->quantity, state->orderCount, BookDeltaAction::Upsert);
+                }
             }
         }
 
@@ -570,24 +578,21 @@ namespace Mercury {
     }
 
     void MatchingEngine::notifyTrade(const Trade& trade) {
-        if (tradeCallback_) {
-            tradeCallback_(trade);
+        if (callbacks_) {
+            callbacks_->onTrade(trade);
         }
     }
 
     void MatchingEngine::notifyExecution(const ExecutionResult& result) {
-        if (executionCallback_) {
-            executionCallback_(result);
+        if (callbacks_) {
+            callbacks_->onExecution(result);
         }
     }
 
-    void MatchingEngine::notifyBookMutation(Side side, int64_t price, BookDeltaAction action) {
-        if (!bookMutationCallback_) {
+    void MatchingEngine::notifyBookMutation(Side side, int64_t price, uint64_t quantity, size_t orderCount, BookDeltaAction action) {
+        if (!callbacks_) {
             return;
         }
-
-        const uint64_t quantity = orderBook_.getQuantityAtPrice(price, side);
-        const size_t orderCount = orderBook_.getOrderCountAtPrice(price, side);
 
         MERCURY_BENCH_SCOPE(Mercury::BenchTiming::Category::CallbackResult);
         BookMutation mutation;
@@ -603,7 +608,7 @@ namespace Mercury {
             std::chrono::system_clock::now());
         mutation.timestamp = static_cast<uint64_t>(now.time_since_epoch().count());
 
-        bookMutationCallback_(mutation);
+        callbacks_->onBookMutation(mutation);
     }
 
 }

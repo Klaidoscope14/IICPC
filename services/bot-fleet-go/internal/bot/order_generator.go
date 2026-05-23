@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -46,22 +47,35 @@ type Order struct {
 	OrderID  string    `json:"order_id,omitempty"` // for cancel
 }
 
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+// Generator owns random state for one worker. rand.Rand is intentionally not
+// shared across goroutines; sharing it would race and skew benchmark results.
+type Generator struct {
+	rng *rand.Rand
+}
 
-func getSide(buyWeight int) Side {
-	if rng.Intn(100) < buyWeight {
+func NewGenerator(seed int64) *Generator {
+	return &Generator{rng: rand.New(rand.NewSource(seed))}
+}
+
+var (
+	defaultGeneratorMu sync.Mutex
+	defaultGenerator   = NewGenerator(time.Now().UnixNano())
+)
+
+func (g *Generator) getSide(buyWeight int) Side {
+	if g.rng.Intn(100) < buyWeight {
 		return SideBuy
 	}
 	return SideSell
 }
 
 // LimitOrder generates a limit order.
-func LimitOrder(buyWeight int) Order {
-	sym := symbols[rng.Intn(len(symbols))]
-	side := getSide(buyWeight)
-	basePrice := 100.0 + rng.Float64()*900.0
+func (g *Generator) LimitOrder(buyWeight int) Order {
+	sym := symbols[g.rng.Intn(len(symbols))]
+	side := g.getSide(buyWeight)
+	basePrice := 100.0 + g.rng.Float64()*900.0
 	price := float64(int(basePrice*100)) / 100 // round to 2dp
-	qty := 1 + rng.Intn(100)
+	qty := 1 + g.rng.Intn(100)
 
 	return Order{
 		Type:     OrderTypeLimit,
@@ -73,10 +87,10 @@ func LimitOrder(buyWeight int) Order {
 }
 
 // MarketOrder generates a market order.
-func MarketOrder(buyWeight int) Order {
-	sym := symbols[rng.Intn(len(symbols))]
-	side := getSide(buyWeight)
-	qty := 1 + rng.Intn(50)
+func (g *Generator) MarketOrder(buyWeight int) Order {
+	sym := symbols[g.rng.Intn(len(symbols))]
+	side := g.getSide(buyWeight)
+	qty := 1 + g.rng.Intn(50)
 
 	return Order{
 		Type:     OrderTypeMarket,
@@ -87,28 +101,57 @@ func MarketOrder(buyWeight int) Order {
 }
 
 // CancelOrder generates a cancel request for a fake order ID.
-func CancelOrder() Order {
+func (g *Generator) CancelOrder() Order {
 	return Order{
 		Type:    OrderTypeCancel,
-		OrderID: fmt.Sprintf("ord-%d", rng.Int63()),
+		OrderID: fmt.Sprintf("ord-%d", g.rng.Int63()),
 	}
 }
 
 // RandomOrder returns an order based on the provided profile weights.
-func RandomOrder(profile OrderProfile) Order {
+func (g *Generator) RandomOrder(profile OrderProfile) Order {
 	totalWeight := profile.LimitWeight + profile.MarketWeight + profile.CancelWeight
 	if totalWeight <= 0 {
 		// Fallback if bad profile
-		return LimitOrder(50)
+		return g.LimitOrder(50)
 	}
 
-	n := rng.Intn(totalWeight)
+	n := g.rng.Intn(totalWeight)
 	switch {
 	case n < profile.LimitWeight:
-		return LimitOrder(profile.BuyWeight)
+		return g.LimitOrder(profile.BuyWeight)
 	case n < profile.LimitWeight+profile.MarketWeight:
-		return MarketOrder(profile.BuyWeight)
+		return g.MarketOrder(profile.BuyWeight)
 	default:
-		return CancelOrder()
+		return g.CancelOrder()
 	}
+}
+
+// LimitOrder generates a limit order using a package-level generator. New code
+// should prefer a per-worker Generator to avoid lock contention.
+func LimitOrder(buyWeight int) Order {
+	defaultGeneratorMu.Lock()
+	defer defaultGeneratorMu.Unlock()
+	return defaultGenerator.LimitOrder(buyWeight)
+}
+
+// MarketOrder generates a market order using a package-level generator.
+func MarketOrder(buyWeight int) Order {
+	defaultGeneratorMu.Lock()
+	defer defaultGeneratorMu.Unlock()
+	return defaultGenerator.MarketOrder(buyWeight)
+}
+
+// CancelOrder generates a cancel request using a package-level generator.
+func CancelOrder() Order {
+	defaultGeneratorMu.Lock()
+	defer defaultGeneratorMu.Unlock()
+	return defaultGenerator.CancelOrder()
+}
+
+// RandomOrder returns an order using a package-level generator.
+func RandomOrder(profile OrderProfile) Order {
+	defaultGeneratorMu.Lock()
+	defer defaultGeneratorMu.Unlock()
+	return defaultGenerator.RandomOrder(profile)
 }

@@ -120,7 +120,10 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) RunResult {
 	}
 
 	// Results drainer — feeds results into the collector.
+	var drainWG sync.WaitGroup
+	drainWG.Add(1)
 	go func() {
+		defer drainWG.Done()
 		for res := range resultsCh {
 			sent := res.StatusCode > 0
 			collector.Record(sent, res.LatencyMs, res.StatusCode, res.TimedOut, res.Err)
@@ -134,9 +137,7 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) RunResult {
 	// Wait for all workers to finish (context deadline fires).
 	wg.Wait()
 	close(resultsCh)
-
-	// Give the drainer a moment to flush.
-	time.Sleep(100 * time.Millisecond)
+	drainWG.Wait()
 
 	final := collector.Snapshot()
 

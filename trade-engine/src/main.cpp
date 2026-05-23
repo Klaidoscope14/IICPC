@@ -5,6 +5,18 @@
 
 using namespace Mercury;
 
+// Helper to construct a limit order
+static Order makeLimitOrder(uint64_t id, Side side, int64_t price, uint64_t quantity, uint64_t clientId) {
+    Order o;
+    o.id = id;
+    o.orderType = OrderType::Limit;
+    o.side = side;
+    o.price = price;
+    o.quantity = quantity;
+    o.clientId = clientId;
+    return o;
+}
+
 void printMarketDepth(Exchange& exchange, const std::string& symbol) {
     auto snapshot = exchange.getSnapshot(symbol, 5);
     std::cout << "\n=== " << symbol << " Market Depth ===" << std::endl;

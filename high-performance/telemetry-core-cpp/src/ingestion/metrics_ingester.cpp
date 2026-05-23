@@ -33,6 +33,13 @@ void MetricsIngester::stop() {
     if (server_thread_.joinable()) {
         server_thread_.join();
     }
+    std::lock_guard<std::mutex> lock(threads_mutex_);
+    for (auto& t : client_threads_) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+    client_threads_.clear();
 }
 
 void MetricsIngester::run() {
@@ -71,8 +78,8 @@ void MetricsIngester::run() {
             continue;
         }
 
-        // Handle client in-line (simple single-threaded for now).
-        handle_client(client_fd);
+        std::lock_guard<std::mutex> lock(threads_mutex_);
+        client_threads_.emplace_back(&MetricsIngester::handle_client, this, client_fd);
     }
 }
 

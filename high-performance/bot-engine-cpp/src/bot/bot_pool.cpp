@@ -17,13 +17,11 @@ void BotPool::start() {
     running_ = true;
     start_time_ = std::chrono::steady_clock::now();
 
-    auto submit_fn = create_submit_fn();
-
     workers_.reserve(config_.bot_count);
     threads_.reserve(config_.bot_count);
 
     for (int i = 0; i < config_.bot_count; ++i) {
-        auto worker = std::make_unique<BotWorker>(i, config_, submit_fn);
+        auto worker = std::make_unique<BotWorker>(i, config_);
         auto* worker_ptr = worker.get();
         workers_.push_back(std::move(worker));
         threads_.emplace_back([worker_ptr]() { worker_ptr->run(); });
@@ -80,19 +78,6 @@ PoolMetrics BotPool::get_metrics() const {
     }
 
     return metrics;
-}
-
-BotWorker::SubmitFunc BotPool::create_submit_fn() {
-    auto client = std::make_shared<HttpClient>(config_.target_url);
-
-    return [client](const Order& order) -> OrderResult {
-        auto response = client->post_order(order);
-        return OrderResult{
-            .success = response.success,
-            .latency = response.latency,
-            .error_message = response.success ? "" : response.body,
-        };
-    };
 }
 
 } // namespace bot_engine

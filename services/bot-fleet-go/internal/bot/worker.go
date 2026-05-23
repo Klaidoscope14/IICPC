@@ -24,6 +24,7 @@ type WorkerConfig struct {
 // pushing each Result into the results channel.
 func RunWorker(ctx context.Context, cfg WorkerConfig, results chan<- Result, logger *slog.Logger) {
 	client := NewHTTPClient(cfg.ServiceURL, cfg.HTTPTimeoutMs, cfg.TraceLogger)
+	generator := NewGenerator(time.Now().UnixNano() + int64(cfg.WorkerID)*7919)
 
 	logger.Debug("bot spawned",
 		slog.String("benchmark_id", cfg.BenchmarkID),
@@ -39,7 +40,7 @@ func RunWorker(ctx context.Context, cfg WorkerConfig, results chan<- Result, log
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			order := RandomOrder(cfg.OrderProfile)
+			order := generator.RandomOrder(cfg.OrderProfile)
 
 			logger.Debug("request sent",
 				slog.String("benchmark_id", cfg.BenchmarkID),

@@ -23,23 +23,30 @@ using namespace Mercury;
 
 // ============== Test Fixture ==============
 
-class MatchingEngineTest : public ::testing::Test {
+class MatchingEngineTest : public ::testing::Test, public IMatchingEngineCallbacks {
 protected:
     MatchingEngine engine;
     std::vector<Trade> capturedTrades;
     std::vector<ExecutionResult> capturedExecutions;
+    std::vector<BookMutation> capturedMutations;
 
     void SetUp() override {
         capturedTrades.clear();
         capturedExecutions.clear();
+        capturedMutations.clear();
+        engine.setCallbacks(this);
+    }
 
-        engine.setTradeCallback([this](const Trade& t) {
-            capturedTrades.push_back(t);
-        });
+    void onTrade(const Trade& t) override {
+        capturedTrades.push_back(t);
+    }
 
-        engine.setExecutionCallback([this](const ExecutionResult& r) {
-            capturedExecutions.push_back(r);
-        });
+    void onExecution(const ExecutionResult& r) override {
+        capturedExecutions.push_back(r);
+    }
+
+    void onBookMutation(const BookMutation& m) override {
+        capturedMutations.push_back(m);
     }
 
     Order makeLimitOrder(uint64_t id, Side side, int64_t price, uint64_t qty,

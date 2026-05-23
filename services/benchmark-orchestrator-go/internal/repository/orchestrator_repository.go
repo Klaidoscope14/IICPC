@@ -20,6 +20,7 @@ type OrchestratorRepository interface {
 	GetLatestDeploymentBySubmission(ctx context.Context, submissionID string) (*domain.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status domain.DeploymentStatus, serviceURL string, containerID string, errMsg string) error
 	GetSubmissionStoragePath(ctx context.Context, submissionID string) (string, error)
+	GetSubmissionBuildInputs(ctx context.Context, submissionID string) (storagePath string, checksum string, err error)
 	CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error
 
 	// Benchmarks
@@ -207,6 +208,20 @@ func (r *postgresRepository) GetSubmissionStoragePath(ctx context.Context, submi
 		return "", fmt.Errorf("failed to get storage path: %w", err)
 	}
 	return path, nil
+}
+
+func (r *postgresRepository) GetSubmissionBuildInputs(ctx context.Context, submissionID string) (string, string, error) {
+	query := `SELECT storage_path, checksum FROM submissions WHERE id = $1`
+	var storagePath string
+	var checksum string
+	err := r.db.QueryRowContext(ctx, query, submissionID).Scan(&storagePath, &checksum)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", "", fmt.Errorf("%w: submission %s", domain.ErrNotFound, submissionID)
+		}
+		return "", "", fmt.Errorf("failed to get submission build inputs: %w", err)
+	}
+	return storagePath, checksum, nil
 }
 
 func (r *postgresRepository) CreateSubmissionLog(ctx context.Context, log *domain.SubmissionLog) error {

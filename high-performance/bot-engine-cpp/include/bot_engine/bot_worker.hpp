@@ -1,20 +1,13 @@
 #pragma once
 
 #include <atomic>
-#include <functional>
 #include <chrono>
 #include <string>
 #include "bot_engine/config.hpp"
 #include "bot_engine/order_generator.hpp"
+#include "bot_engine/http_client.hpp"
 
 namespace bot_engine {
-
-/// Result of a single order submission attempt.
-struct OrderResult {
-    bool success;
-    std::chrono::microseconds latency;
-    std::string error_message;
-};
 
 /// A single trading bot that generates and submits orders in a loop.
 ///
@@ -22,10 +15,8 @@ struct OrderResult {
 /// rate and submitting them to the target exchange endpoint.
 class BotWorker {
 public:
-    using SubmitFunc = std::function<OrderResult(const Order&)>;
-
-    /// Create a worker with a unique ID and order submission function.
-    BotWorker(int worker_id, const BotConfig& config, SubmitFunc submit_fn);
+    /// Create a worker with a unique ID.
+    BotWorker(int worker_id, const BotConfig& config);
 
     /// Run the worker for the configured duration. Blocks until done or stopped.
     void run();
@@ -48,7 +39,7 @@ public:
 private:
     int worker_id_;
     BotConfig config_;
-    SubmitFunc submit_fn_;
+    HttpClient http_client_;
     OrderGenerator generator_;
     std::atomic<bool> running_{false};
     std::atomic<int64_t> orders_sent_{0};

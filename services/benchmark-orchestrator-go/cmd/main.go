@@ -51,6 +51,11 @@ func main() {
 	}
 	defer db.Close()
 
+	// Tune connection pool for concurrent event ingestion, telemetry writes, and leaderboard reads.
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}

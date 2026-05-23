@@ -12,15 +12,15 @@ const SchemaVersion = "v1"
 
 const (
 	// Submission uploads use the existing submission.created topic name so current consumers stay compatible.
-	TopicSubmissionUploaded  = "submission.created"
-	TopicSubmissionDeleted   = "submission.deleted"
-	TopicValidationCompleted = "validation.completed"
-	TopicEngineReady         = "deployment.ready"
-	TopicBenchmarkStarted    = "benchmark.started"
-	TopicBenchmarkFinished   = "benchmark.completed"
-	TopicTelemetrySnapshot   = "telemetry.snapshot"
-	TopicLeaderboardUpdated  = "leaderboard.updated"
-	TopicTraceAvailable      = "benchmark.trace_available"
+	TopicSubmissionUploaded   = "submission.created"
+	TopicSubmissionDeleted    = "submission.deleted"
+	TopicValidationCompleted  = "validation.completed"
+	TopicEngineReady          = "deployment.ready"
+	TopicBenchmarkStarted     = "benchmark.started"
+	TopicBenchmarkFinished    = "benchmark.completed"
+	TopicTelemetrySnapshot    = "telemetry.snapshot"
+	TopicLeaderboardUpdated   = "leaderboard.updated"
+	TopicTraceAvailable       = "benchmark.trace_available"
 	TopicCorrectnessEvaluated = "correctness.evaluated"
 )
 
@@ -86,8 +86,12 @@ type BenchmarkFinishedEvent struct {
 	SubmissionID     string    `json:"submission_id"`
 	CompositeScore   float64   `json:"composite_score"`
 	TPS              float64   `json:"tps"`
+	P50LatencyMs     float64   `json:"p50_latency_ms,omitempty"`
+	P90LatencyMs     float64   `json:"p90_latency_ms,omitempty"`
 	P99LatencyMs     float64   `json:"p99_latency_ms"`
 	CorrectnessScore float64   `json:"correctness_score"`
+	TotalOrders      int32     `json:"total_orders,omitempty"`
+	FailedOrders     int32     `json:"failed_orders,omitempty"`
 	ElapsedSeconds   int64     `json:"elapsed_seconds"`
 	FinishedAt       time.Time `json:"finished_at,omitempty"`
 }

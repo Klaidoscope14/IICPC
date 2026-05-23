@@ -35,7 +35,7 @@ ExecutionResult Exchange::submitOrder(const std::string& symbol, Order order) {
     if (!engine) {
         ExecutionResult result;
         result.status = ExecutionStatus::Rejected;
-        result.orderId = order.orderId;
+        result.orderId = order.id;
         return result;
     }
     return engine->submitOrder(std::move(order));
@@ -71,7 +71,9 @@ MarketSnapshot Exchange::getSnapshot(const std::string& symbol, size_t maxLevels
     if (!engine) {
         return MarketSnapshot{};
     }
-    return engine->getOrderBook().getSnapshot(maxLevels);
+    auto snapshot = engine->getOrderBook().getSnapshot(maxLevels);
+    snapshot.symbol = symbol;
+    return snapshot;
 }
 
 } // namespace Mercury

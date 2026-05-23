@@ -51,6 +51,8 @@ namespace Mercury {
         uint64_t timestamp = 0;
     };
 
+    using MarketSnapshot = L2Snapshot;
+
     struct BookDelta {
         uint64_t sequence = 0;
         std::string symbol;

@@ -52,8 +52,8 @@ namespace Mercury {
          * Construct order book with optional initial pool size
          */
         explicit OrderBook(size_t initialPoolSize = DEFAULT_ORDER_POOL_SIZE)
-            : orderPool_(initialPoolSize, true)  // Allow growth
-            , orderLookup_(initialPoolSize) {}
+            : orderLookup_(initialPoolSize)
+            , orderPool_(initialPoolSize, true) {}  // Allow growth
 
         // Disable copy (pool ownership)
         OrderBook(const OrderBook&) = delete;
@@ -63,25 +63,30 @@ namespace Mercury {
         OrderBook(OrderBook&&) = default;
         OrderBook& operator=(OrderBook&&) = default;
 
+        struct LevelState {
+            uint64_t quantity = 0;
+            size_t orderCount = 0;
+        };
+
         /**
          * Add an order to the book
-         * @return true if added, false if duplicate ID or invalid
+         * @return LevelState if added, nullopt if duplicate ID or invalid
          */
-        bool addOrder(const Order& order) {
+        std::optional<LevelState> addOrder(const Order& order) {
             // Check for duplicate order ID
             if (orderLookup_.contains(order.id)) {
-                return false;
+                return std::nullopt;
             }
 
             // Validate order
             if (order.id == 0 || order.quantity == 0) {
-                return false;
+                return std::nullopt;
             }
 
             // Acquire node from pool
             OrderNode* node = orderPool_.acquire();
             if (!node) {
-                return false;  // Pool exhausted (shouldn't happen with growth)
+                return std::nullopt;  // Pool exhausted (shouldn't happen with growth)
             }
 
             // Initialize node from order
@@ -107,20 +112,20 @@ namespace Mercury {
             // Add to lookup map
             orderLookup_.insert(order.id, OrderLocation{node, order.price, order.side});
 
-            return true;
+            return LevelState{level->quantity(), level->size()};
         }
 
         /**
          * Remove an order from the book
-         * @return true if removed, false if not found
+         * @return LevelState if removed, nullopt if not found
          */
-        bool removeOrder(uint64_t orderId) {
-            if (orderId == 0) return false;
+        std::optional<LevelState> removeOrder(uint64_t orderId) {
+            if (orderId == 0) return std::nullopt;
 
             // Find in lookup map
             OrderLocation* loc = orderLookup_.find(orderId);
             if (!loc) {
-                return false;
+                return std::nullopt;
             }
 
             return removeOrder(loc->node);
@@ -128,15 +133,16 @@ namespace Mercury {
 
         /**
          * Remove an order from the book using a direct node pointer
-         * @return true if removed, false if invalid
+         * @return LevelState if removed, nullopt if invalid
          */
-        bool removeOrder(OrderNode* node) {
+        std::optional<LevelState> removeOrder(OrderNode* node) {
             if (!node || node->id == 0) {
-                return false;
+                return std::nullopt;
             }
 
             const int64_t price = node->price;
             const Side side = node->side;
+            LevelState state;
 
             // Remove from price level
             if (side == Side::Buy) {
@@ -151,6 +157,9 @@ namespace Mercury {
                     if (it->second.empty()) {
                         MERCURY_BENCH_SCOPE(Mercury::BenchTiming::Category::LadderMap);
                         bids_.erase(it);
+                    } else {
+                        state.quantity = it->second.quantity();
+                        state.orderCount = it->second.size();
                     }
                 }
             } else {
@@ -164,6 +173,9 @@ namespace Mercury {
                     if (it->second.empty()) {
                         MERCURY_BENCH_SCOPE(Mercury::BenchTiming::Category::LadderMap);
                         asks_.erase(it);
+                    } else {
+                        state.quantity = it->second.quantity();
+                        state.orderCount = it->second.size();
                     }
                 }
             }
@@ -175,7 +187,7 @@ namespace Mercury {
             node->reset();
             orderPool_.release(node);
 
-            return true;
+            return state;
         }
 
         /**
@@ -203,24 +215,24 @@ namespace Mercury {
 
         /**
          * Update order quantity
-         * @return true if updated, false if not found or invalid
+         * @return LevelState if updated, nullopt if not found or invalid
          */
-        bool updateOrderQuantity(uint64_t orderId, uint64_t newQuantity) {
-            if (orderId == 0) return false;
+        std::optional<LevelState> updateOrderQuantity(uint64_t orderId, uint64_t newQuantity) {
+            if (orderId == 0) return std::nullopt;
 
             OrderLocation* loc = orderLookup_.find(orderId);
-            if (!loc) return false;
+            if (!loc) return std::nullopt;
 
             return updateOrderQuantity(loc->node, newQuantity);
         }
 
         /**
          * Update order quantity using a direct node pointer
-         * @return true if updated, false if invalid
+         * @return LevelState if updated, nullopt if invalid
          */
-        bool updateOrderQuantity(OrderNode* node, uint64_t newQuantity) {
+        std::optional<LevelState> updateOrderQuantity(OrderNode* node, uint64_t newQuantity) {
             if (!node || node->id == 0) {
-                return false;
+                return std::nullopt;
             }
 
             if (newQuantity == 0) {
@@ -229,6 +241,7 @@ namespace Mercury {
 
             const int64_t price = node->price;
             const Side side = node->side;
+            LevelState state;
 
             // Update in price level
             if (side == Side::Buy) {
@@ -239,6 +252,8 @@ namespace Mercury {
                 }
                 if (it != bids_.end()) {
                     it->second.updateOrderQuantity(node, newQuantity);
+                    state.quantity = it->second.quantity();
+                    state.orderCount = it->second.size();
                 }
             } else {
                 auto it = asks_.end();
@@ -248,10 +263,12 @@ namespace Mercury {
                 }
                 if (it != asks_.end()) {
                     it->second.updateOrderQuantity(node, newQuantity);
+                    state.quantity = it->second.quantity();
+                    state.orderCount = it->second.size();
                 }
             }
 
-            return true;
+            return state;
         }
 
         /**
@@ -430,6 +447,18 @@ namespace Mercury {
             }
 
             return levels;
+        }
+
+        L2Snapshot getSnapshot(size_t maxLevels = 5) const {
+            L2Snapshot snapshot;
+            snapshot.depth = maxLevels;
+            snapshot.bids = getTopLevels(Side::Buy, maxLevels);
+            snapshot.asks = getTopLevels(Side::Sell, maxLevels);
+            snapshot.bestBid = tryGetBestBid();
+            snapshot.bestAsk = tryGetBestAsk();
+            snapshot.spread = getSpread();
+            snapshot.midPrice = getMidPrice();
+            return snapshot;
         }
 
         [[nodiscard]] size_t getOrderCount() const noexcept { return orderLookup_.size(); }

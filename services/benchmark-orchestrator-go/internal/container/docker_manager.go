@@ -24,6 +24,9 @@ type Manager interface {
 	// BuildImage builds a container image from a tar archive.
 	BuildImage(ctx context.Context, buildContext io.Reader, imageName string) (BuildResult, error)
 
+	// ImageExists reports whether an image tag is already present locally.
+	ImageExists(ctx context.Context, imageName string) (bool, error)
+
 	// PullImage pulls a container image from a registry.
 	PullImage(ctx context.Context, imageName string) error
 
@@ -114,6 +117,18 @@ func (m *DockerManager) BuildImage(ctx context.Context, buildContext io.Reader, 
 	return result, nil
 }
 
+func (m *DockerManager) ImageExists(ctx context.Context, imageName string) (bool, error) {
+	_, _, err := m.client.ImageInspectWithRaw(ctx, imageName)
+	if err == nil {
+		return true, nil
+	}
+	errText := strings.ToLower(err.Error())
+	if strings.Contains(errText, "no such image") || strings.Contains(errText, "not found") {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to inspect image %s: %w", imageName, err)
+}
+
 func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) (string, string, error) {
 	m.logger.Info("creating container",
 		slog.String("image", opts.ImageName),
@@ -175,15 +190,15 @@ func (m *DockerManager) CreateAndStart(ctx context.Context, opts CreateOptions) 
 	}
 
 	hostConfig := &container.HostConfig{
-		PortBindings:   portBindings,
+		PortBindings:    portBindings,
 		PublishAllPorts: true,
-		Resources:      resources,
-		NetworkMode:    container.NetworkMode(networkMode),
-		RestartPolicy:  container.RestartPolicy{Name: "no"},
-		ReadonlyRootfs: true, // Read-only filesystem
-		SecurityOpt:    []string{"no-new-privileges"},
-		CapDrop:        []string{"ALL"},
-		Init:           boolPtr(true),
+		Resources:       resources,
+		NetworkMode:     container.NetworkMode(networkMode),
+		RestartPolicy:   container.RestartPolicy{Name: "no"},
+		ReadonlyRootfs:  true, // Read-only filesystem
+		SecurityOpt:     []string{"no-new-privileges"},
+		CapDrop:         []string{"ALL"},
+		Init:            boolPtr(true),
 		Tmpfs: map[string]string{
 			"/tmp": "rw,noexec,nosuid,size=64m",
 		},
@@ -293,19 +308,19 @@ func (m *DockerManager) CaptureLogs(ctx context.Context, containerID string, log
 			}
 			var size uint32
 			size = uint32(buf[4])<<24 | uint32(buf[5])<<16 | uint32(buf[6])<<8 | uint32(buf[7])
-			
+
 			payload := make([]byte, size)
 			if _, err := io.ReadFull(logs, payload); err != nil {
 				return
 			}
-			
+
 			// Docker multiplexes stdout and stderr using an 8-byte header.
 			// buf[0] is 1 for stdout, 2 for stderr.
 			logType := "stdout"
 			if buf[0] == 2 {
 				logType = "stderr"
 			}
-			
+
 			msg := strings.TrimSpace(string(payload))
 			if msg != "" {
 				logger.Info(msg, slog.String("type", "container_runtime"), slog.String("stream", logType))
@@ -329,58 +344,77 @@ func (m *DockerManager) WaitForHealthy(ctx context.Context, containerID string, 
 		slog.String("container_id", shortID(containerID, 12)),
 		slog.String("health_url", healthURL),
 	)
+	if healthURL == "" {
+		return fmt.Errorf("health URL is empty")
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+
+	interval := 50 * time.Millisecond
+	lastInspect := time.Time{}
 
 	for {
-		select {
-		case <-deadline.C:
-			return fmt.Errorf("health check timed out after %v", timeout)
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Check if the container is still running.
+		if err := probeHealth(ctx, healthURL); err == nil {
+			m.logger.Info("container health probe passed",
+				slog.String("container_id", shortID(containerID, 12)),
+				slog.String("health_url", healthURL),
+			)
+			return nil
+		} else {
+			m.logger.Debug("container health probe failed",
+				slog.String("container_id", shortID(containerID, 12)),
+				slog.String("error", err.Error()),
+			)
+		}
+
+		if time.Since(lastInspect) >= time.Second {
+			lastInspect = time.Now()
 			running, err := m.IsRunning(ctx, containerID)
 			if err != nil || !running {
 				return fmt.Errorf("container exited before becoming healthy")
 			}
+		}
 
-			if healthURL == "" {
-				return fmt.Errorf("health URL is empty")
+		wait := time.NewTimer(interval)
+		select {
+		case <-deadline.C:
+			wait.Stop()
+			return fmt.Errorf("health check timed out after %v", timeout)
+		case <-ctx.Done():
+			wait.Stop()
+			return ctx.Err()
+		case <-wait.C:
+			if interval < 500*time.Millisecond {
+				interval *= 2
+				if interval > 500*time.Millisecond {
+					interval = 500 * time.Millisecond
+				}
 			}
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
-			if err != nil {
-				return fmt.Errorf("invalid health URL %q: %w", healthURL, err)
-			}
-
-			resp, err := healthHTTPClient.Do(req)
-			if err != nil {
-				m.logger.Debug("container health probe failed",
-					slog.String("container_id", shortID(containerID, 12)),
-					slog.String("error", err.Error()),
-				)
-				continue
-			}
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-
-			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-				m.logger.Info("container health probe passed",
-					slog.String("container_id", shortID(containerID, 12)),
-					slog.Int("status", resp.StatusCode),
-				)
-				return nil
-			}
-			m.logger.Debug("container health probe returned non-success",
-				slog.String("container_id", shortID(containerID, 12)),
-				slog.Int("status", resp.StatusCode),
-			)
 		}
 	}
+}
+
+func probeHealth(ctx context.Context, healthURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("invalid health URL %q: %w", healthURL, err)
+	}
+
+	resp, err := healthHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("health endpoint returned http_%d", resp.StatusCode)
+	}
+	return nil
 }
 
 // PullImage pulls a container image from a registry.

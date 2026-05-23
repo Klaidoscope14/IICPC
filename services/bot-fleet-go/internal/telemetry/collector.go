@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"math"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,8 +17,11 @@ type Collector struct {
 	totalErrors        atomic.Int64
 	totalTimeouts      atomic.Int64
 
-	// Latency samples — protected by mu.
-	latencySamples []float64
+	// Latency histogram — protected by mu. Buckets are cumulative for the run
+	// so final p50/p90/p99 stay stable without sorting hot-path samples.
+	latencyBuckets []uint64
+	latencyCount   uint64
+	latencySumMs   float64
 
 	// TPS tracking — protected by mu.
 	windowStart    time.Time
@@ -30,7 +32,7 @@ type Collector struct {
 func NewCollector() *Collector {
 	return &Collector{
 		windowStart:    time.Now(),
-		latencySamples: make([]float64, 0, 4096),
+		latencyBuckets: make([]uint64, latencyBucketCount),
 	}
 }
 
@@ -53,7 +55,9 @@ func (c *Collector) Record(sent bool, latencyMs float64, statusCode int, timedOu
 
 	if latencyMs > 0 {
 		c.mu.Lock()
-		c.latencySamples = append(c.latencySamples, latencyMs)
+		c.latencyBuckets[latencyBucketIndex(latencyMs)]++
+		c.latencyCount++
+		c.latencySumMs += latencyMs
 		c.windowRequests++
 		c.mu.Unlock()
 	}
@@ -75,18 +79,10 @@ func (c *Collector) Snapshot() Metrics {
 	c.windowStart = now
 	c.windowRequests = 0
 
-	p50, p90, p99 := latencyPercentiles(c.latencySamples)
+	p50, p90, p99 := c.latencyPercentilesLocked()
 	avgLatency := 0.0
-	if len(c.latencySamples) > 0 {
-		sum := 0.0
-		for _, v := range c.latencySamples {
-			sum += v
-		}
-		avgLatency = sum / float64(len(c.latencySamples))
-	}
-	// Keep only the last 10k samples to bound memory.
-	if len(c.latencySamples) > 10000 {
-		c.latencySamples = c.latencySamples[len(c.latencySamples)-10000:]
+	if c.latencyCount > 0 {
+		avgLatency = c.latencySumMs / float64(c.latencyCount)
 	}
 
 	return Metrics{
@@ -115,30 +111,72 @@ type Metrics struct {
 	P99LatencyMs            float64
 }
 
-func latencyPercentiles(samples []float64) (p50, p90, p99 float64) {
-	if len(samples) == 0 {
+const (
+	fineBucketWidthMs   = 0.1
+	fineBucketMaxMs     = 1000.0
+	midBucketWidthMs    = 1.0
+	midBucketMaxMs      = 10000.0
+	coarseBucketWidthMs = 10.0
+	coarseBucketMaxMs   = 60000.0
+
+	fineBucketCount    = int(fineBucketMaxMs / fineBucketWidthMs)
+	midBucketCount     = int((midBucketMaxMs - fineBucketMaxMs) / midBucketWidthMs)
+	coarseBucketCount  = int((coarseBucketMaxMs - midBucketMaxMs) / coarseBucketWidthMs)
+	latencyBucketCount = fineBucketCount + midBucketCount + coarseBucketCount + 1
+)
+
+func (c *Collector) latencyPercentilesLocked() (p50, p90, p99 float64) {
+	if c.latencyCount == 0 {
 		return 0, 0, 0
 	}
-	sorted := make([]float64, len(samples))
-	copy(sorted, samples)
-	sort.Float64s(sorted)
 
-	p50 = percentile(sorted, 50)
-	p90 = percentile(sorted, 90)
-	p99 = percentile(sorted, 99)
+	p50 = percentileFromBuckets(c.latencyBuckets, c.latencyCount, 50)
+	p90 = percentileFromBuckets(c.latencyBuckets, c.latencyCount, 90)
+	p99 = percentileFromBuckets(c.latencyBuckets, c.latencyCount, 99)
 	return
 }
 
-func percentile(sorted []float64, p float64) float64 {
-	if len(sorted) == 0 {
+func percentileFromBuckets(buckets []uint64, total uint64, p float64) float64 {
+	if total == 0 {
 		return 0
 	}
-	idx := int(math.Ceil(float64(len(sorted))*p/100)) - 1
-	if idx < 0 {
-		idx = 0
+	threshold := uint64(math.Ceil(float64(total) * p / 100))
+	var seen uint64
+	for idx, count := range buckets {
+		seen += count
+		if seen >= threshold {
+			return math.Round(latencyBucketValue(idx)*100) / 100
+		}
 	}
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
+	return coarseBucketMaxMs
+}
+
+func latencyBucketIndex(ms float64) int {
+	switch {
+	case ms < fineBucketMaxMs:
+		idx := int(ms / fineBucketWidthMs)
+		if idx < 0 {
+			return 0
+		}
+		return idx
+	case ms < midBucketMaxMs:
+		return fineBucketCount + int((ms-fineBucketMaxMs)/midBucketWidthMs)
+	case ms < coarseBucketMaxMs:
+		return fineBucketCount + midBucketCount + int((ms-midBucketMaxMs)/coarseBucketWidthMs)
+	default:
+		return latencyBucketCount - 1
 	}
-	return math.Round(sorted[idx]*100) / 100
+}
+
+func latencyBucketValue(idx int) float64 {
+	switch {
+	case idx < fineBucketCount:
+		return (float64(idx) + 0.5) * fineBucketWidthMs
+	case idx < fineBucketCount+midBucketCount:
+		return fineBucketMaxMs + (float64(idx-fineBucketCount)+0.5)*midBucketWidthMs
+	case idx < fineBucketCount+midBucketCount+coarseBucketCount:
+		return midBucketMaxMs + (float64(idx-fineBucketCount-midBucketCount)+0.5)*coarseBucketWidthMs
+	default:
+		return coarseBucketMaxMs
+	}
 }

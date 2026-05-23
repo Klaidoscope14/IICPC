@@ -32,9 +32,9 @@ type BroadcastMessage struct {
 
 func NewHub(logger *slog.Logger) *Hub {
 	return &Hub{
-		broadcast:  make(chan BroadcastMessage, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		broadcast:  make(chan BroadcastMessage, 1024),
+		register:   make(chan *Client, 128),
+		unregister: make(chan *Client, 128),
 		rooms:      make(map[string]map[*Client]bool),
 		logger:     logger,
 	}
@@ -63,36 +63,47 @@ func (h *Hub) Run() {
 			h.logger.Debug("Client registered", "room", client.Room, "client_id", client.ID)
 
 		case client := <-h.unregister:
-			h.mu.Lock()
-			if connections, ok := h.rooms[client.Room]; ok {
-				if _, ok := connections[client]; ok {
-					delete(connections, client)
-					close(client.send)
-					if len(connections) == 0 {
-						delete(h.rooms, client.Room)
-					}
-					h.logger.Debug("Client unregistered", "room", client.Room, "client_id", client.ID)
-				}
-			}
-			h.mu.Unlock()
+			h.removeClient(client)
 
 		case message := <-h.broadcast:
+			var stale []*Client
 			h.mu.RLock()
 			connections := h.rooms[message.Room]
 			for client := range connections {
 				select {
 				case client.send <- message.Payload:
 				default:
-					// If the client's send buffer is full, we assume the client is dead or stuck
-					// and we drop the client.
-					h.mu.RUnlock() // unlock to allow unregister
-					h.unregister <- client
-					h.mu.RLock() // re-lock to continue loop
+					// Drop stuck clients outside the read lock so fanout never
+					// blocks on the hub's own unregister channel.
+					stale = append(stale, client)
 				}
 			}
 			h.mu.RUnlock()
+			for _, client := range stale {
+				h.removeClient(client)
+			}
 		}
 	}
+}
+
+func (h *Hub) removeClient(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	connections, ok := h.rooms[client.Room]
+	if !ok {
+		return
+	}
+	if _, ok := connections[client]; !ok {
+		return
+	}
+
+	delete(connections, client)
+	close(client.send)
+	if len(connections) == 0 {
+		delete(h.rooms, client.Room)
+	}
+	h.logger.Debug("Client unregistered", "room", client.Room, "client_id", client.ID)
 }
 
 // Broadcast sends a message to all clients in a specific room.

@@ -3,8 +3,6 @@
 #include "Order.h"
 #include "OrderBook.h"
 #include "MarketData.h"
-#include <functional>
-#include <atomic>
 
 namespace Mercury {
 
@@ -22,13 +20,16 @@ namespace Mercury {
      * - IOC (Immediate-or-cancel): Fill what you can, cancel rest
      * - FOK (Fill-or-kill): Fill entirely or reject entirely
      */
+    class IMatchingEngineCallbacks {
+    public:
+        virtual ~IMatchingEngineCallbacks() = default;
+        virtual void onTrade(const Trade&) = 0;
+        virtual void onExecution(const ExecutionResult&) = 0;
+        virtual void onBookMutation(const BookMutation&) = 0;
+    };
+
     class MatchingEngine {
     public:
-        // Callback types for trade notifications
-        using TradeCallback = std::function<void(const Trade&)>;
-        using ExecutionCallback = std::function<void(const ExecutionResult&)>;
-        using BookMutationCallback = std::function<void(const BookMutation&)>;
-
         MatchingEngine();
 
         /**
@@ -95,9 +96,7 @@ namespace Mercury {
         //
         //   Listeners that need to trigger follow-on orders should defer the
         //   call until the current submitOrder/cancel/modify returns.
-        void setTradeCallback(TradeCallback callback) { tradeCallback_ = std::move(callback); }
-        void setExecutionCallback(ExecutionCallback callback) { executionCallback_ = std::move(callback); }
-        void setBookMutationCallback(BookMutationCallback callback) { bookMutationCallback_ = std::move(callback); }
+        void setCallbacks(IMatchingEngineCallbacks* callbacks) { callbacks_ = callbacks; }
 
         // Accessors
         const OrderBook& getOrderBook() const { return orderBook_; }
@@ -112,15 +111,13 @@ namespace Mercury {
         OrderBook orderBook_;
         
         // Counters for trade IDs and stats
-        std::atomic<uint64_t> tradeIdCounter_{0};
-        std::atomic<uint64_t> currentTimestamp_{0};
+        uint64_t tradeIdCounter_ = 0;
+        uint64_t currentTimestamp_ = 0;
         uint64_t tradeCount_ = 0;
         uint64_t totalVolume_ = 0;
 
         // Callbacks
-        TradeCallback tradeCallback_;
-        ExecutionCallback executionCallback_;
-        BookMutationCallback bookMutationCallback_;
+        IMatchingEngineCallbacks* callbacks_ = nullptr;
 
         /**
          * Match an aggressive order against the book
@@ -162,7 +159,7 @@ namespace Mercury {
         /**
          * Notify listeners about an aggregated price-level change
          */
-        void notifyBookMutation(Side side, int64_t price, BookDeltaAction action);
+        void notifyBookMutation(Side side, int64_t price, uint64_t quantity, size_t orderCount, BookDeltaAction action);
 
         /**
          * Check if an order can be completely filled (for FOK orders)

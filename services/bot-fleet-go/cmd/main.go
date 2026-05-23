@@ -135,7 +135,11 @@ func main() {
 					BenchmarkID:    event.BenchmarkID,
 					SubmissionID:   event.SubmissionID,
 					TPS:            float64(finalMetrics.TotalOrdersSent) / float64(duration),
+					P50LatencyMs:   finalMetrics.P50LatencyMs,
+					P90LatencyMs:   finalMetrics.P90LatencyMs,
 					P99LatencyMs:   finalMetrics.P99LatencyMs,
+					TotalOrders:    finalMetrics.TotalOrdersSent,
+					FailedOrders:   finalMetrics.TotalErrors,
 					ElapsedSeconds: int64(duration),
 					FinishedAt:     time.Now().UTC(),
 				}
@@ -205,8 +209,8 @@ func main() {
 			"dependencies": gin.H{
 				"redpanda": redpandaStatus,
 			},
-			"presets":    fleet.PresetNames(),
-			"timestamp":  time.Now().UTC(),
+			"presets":   fleet.PresetNames(),
+			"timestamp": time.Now().UTC(),
 		})
 	})
 
@@ -269,10 +273,10 @@ func main() {
 			"benchmark_id": benchmarkID,
 			"message":      "dry run started",
 			"config": gin.H{
-				"bot_count":        req.BotCount,
-				"duration_seconds": req.Duration,
+				"bot_count":         req.BotCount,
+				"duration_seconds":  req.Duration,
 				"orders_per_second": req.OPS,
-				"service_url":      req.ServiceURL,
+				"service_url":       req.ServiceURL,
 			},
 		})
 	})

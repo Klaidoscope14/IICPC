@@ -49,9 +49,6 @@ private:
     std::vector<std::thread> threads_;
     std::atomic<bool> running_{false};
     std::chrono::steady_clock::time_point start_time_;
-
-    /// Create the HTTP submit function for workers.
-    BotWorker::SubmitFunc create_submit_fn();
 };
 
 } // namespace bot_engine
