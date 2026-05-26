@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-fleet
+  namespace: iicpc
+  labels:
+    app: bot-fleet
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: bot-fleet
+  template:
+    metadata:
+      labels:
+        app: bot-fleet
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - bot-fleet
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: bot-fleet
+        image: iicpc/bot-fleet:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8085
+        envFrom:
+        - configMapRef:
+            name: iicpc-config
+        env:
+        - name: SERVER_PORT
+          value: "8085"
+        volumeMounts:
+        - name: traces-volume
+          mountPath: /app/traces
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "1Gi"
+          limits:
+            cpu: "4000m"
+            memory: "4Gi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8085
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: traces-volume
+        persistentVolumeClaim:
+          claimName: traces-storage-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: traces-storage-pvc
+  namespace: iicpc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bot-fleet
+  namespace: iicpc
+spec:
+  ports:
+  - port: 8085
+    targetPort: 8085
+    protocol: TCP
+  selector:
+    app: bot-fleet
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bot-fleet-hpa
+  namespace: iicpc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bot-fleet
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50

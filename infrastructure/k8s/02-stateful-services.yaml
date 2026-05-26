@@ -1,0 +1,183 @@
+# POSTGRES
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: iicpc
+spec:
+  serviceName: "postgres-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: timescale/timescaledb:2.17.2-pg15
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: iicpc-secrets
+              key: DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: iicpc-secrets
+              key: DB_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: iicpc-secrets
+              key: DB_NAME
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: iicpc
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+---
+# REDIS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: iicpc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: iicpc
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: redis
+---
+# REDPANDA (Single node for development, use Operator for prod)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: iicpc
+spec:
+  serviceName: "redpanda-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+      - name: redpanda
+        image: redpandadata/redpanda:v24.2.7
+        command:
+          - redpanda
+          - start
+          - --smp
+          - "1"
+          - --memory
+          - 768M
+          - --reserve-memory
+          - 0M
+          - --overprovisioned
+          - --node-id
+          - "0"
+          - --check=false
+          - --kafka-addr
+          - internal://0.0.0.0:9092,external://0.0.0.0:19092
+          - --advertise-kafka-addr
+          - internal://redpanda-service:9092,external://localhost:19092
+        ports:
+        - containerPort: 9092
+          name: kafka
+        - containerPort: 19092
+          name: kafka-ext
+        volumeMounts:
+        - name: redpanda-data
+          mountPath: /var/lib/redpanda/data
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+  volumeClaimTemplates:
+  - metadata:
+      name: redpanda-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda-service
+  namespace: iicpc
+spec:
+  ports:
+  - port: 9092
+    name: kafka
+  - port: 19092
+    name: kafka-ext
+  selector:
+    app: redpanda

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iicpc-config
+  namespace: iicpc
+data:
+  # Database Configs
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_SSLMODE: "disable"
+  
+  # Redis
+  REDIS_ADDR: "redis-service:6379"
+  
+  # Redpanda
+  REDPANDA_BROKERS: "redpanda-service:9092"
+  
+  # Internal Service URLs
+  SUBMISSION_SERVICE_URL: "http://submission-service:8080"
+  VALIDATION_SERVICE_URL: "http://validation-service:8084"
+  ORCHESTRATOR_URL: "http://benchmark-orchestrator:8081"
+  BOT_FLEET_URL: "http://bot-fleet:8085"
+  WEBSOCKET_SERVICE_URL: "http://websocket-service:8087"
+  
+  # API Gateway Settings
+  RATE_LIMIT_PER_MINUTE: "6000"
+  MAX_BODY_SIZE_MB: "64"
+  
+  # Orchestrator Settings
+  BUILD_TIMEOUT_SECONDS: "300"
+  DEPLOY_TIMEOUT_SECONDS: "180"
+  HEALTH_PROBE_TIMEOUT_SECONDS: "30"
+  IDLE_CONTAINER_TTL_SECONDS: "1800"
+  RESTART_ATTEMPTS: "1"
+  SANDBOX_NETWORK_MODE: "bridge"
+  SANDBOX_BIND_HOST: "0.0.0.0"
+  SANDBOX_SERVICE_HOST: "host.docker.internal"
+  
+  # Bot Fleet Settings
+  BOT_CONCURRENCY: "500"
+  DEFAULT_DURATION_SECONDS: "30"
+  DEFAULT_ORDERS_PER_SECOND: "50"
+  BOT_HTTP_TIMEOUT_MS: "2000"
+  
+  # General Settings
+  STORAGE_BASE_PATH: "/data/iicpc-storage"
+  TRACES_DIR: "/app/traces"
+  LOG_LEVEL: "info"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iicpc-secrets
+  namespace: iicpc
+type: Opaque
+stringData:
+  # Base64 encoding is handled by Kubernetes when using stringData
+  DB_USER: "postgres"
+  DB_PASSWORD: "supersecretpassword123"
+  DB_NAME: "iicpc"
+  API_AUTH_TOKEN: "secret-token-for-internal-auth"

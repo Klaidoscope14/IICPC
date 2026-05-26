@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-service
+  namespace: iicpc
+  labels:
+    app: validation-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: validation-service
+  template:
+    metadata:
+      labels:
+        app: validation-service
+    spec:
+      containers:
+      - name: validation-service
+        image: iicpc/validation-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8084
+        envFrom:
+        - configMapRef:
+            name: iicpc-config
+        - secretRef:
+            name: iicpc-secrets
+        env:
+        - name: PORT
+          value: "8084"
+        - name: CONSUMER_GROUP_ID
+          value: "validation-service-group"
+        volumeMounts:
+        - name: storage-volume
+          mountPath: /data/iicpc-storage
+          readOnly: true
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8084
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: submission-storage-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: validation-service
+  namespace: iicpc
+spec:
+  ports:
+  - port: 8084
+    targetPort: 8084
+    protocol: TCP
+  selector:
+    app: validation-service
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: validation-service-hpa
+  namespace: iicpc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: validation-service
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
