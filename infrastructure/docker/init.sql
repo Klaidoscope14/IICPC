@@ -9,12 +9,31 @@ CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 -- Core Metadata
 -- ============================================================================
 
+CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(255) PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL DEFAULT 'contestant',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS teams (
     contestant_id VARCHAR(255) PRIMARY KEY,
     team_name VARCHAR(255) NOT NULL,
+    user_ids VARCHAR(255)[] NOT NULL DEFAULT '{}',
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS hackathon_config (
+    id VARCHAR(50) PRIMARY KEY DEFAULT 'global',
+    status VARCHAR(50) NOT NULL DEFAULT 'upcoming',
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT hackathon_config_status_check CHECK (status IN ('upcoming', 'active', 'ended'))
 );
 
 CREATE TABLE IF NOT EXISTS submissions (
@@ -305,6 +324,16 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_hackathon_config_updated_at ON hackathon_config;
+CREATE TRIGGER update_hackathon_config_updated_at
+    BEFORE UPDATE ON hackathon_config
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_teams_updated_at ON teams;
 CREATE TRIGGER update_teams_updated_at
