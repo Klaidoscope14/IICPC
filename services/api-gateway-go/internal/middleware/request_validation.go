@@ -13,7 +13,11 @@ import (
 
 func RequestValidator(maxBodyBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") && !strings.HasPrefix(c.Request.URL.Path, "/api/v1/") && c.Request.URL.Path != "/api/v1" {
+		isAPIPath := strings.HasPrefix(c.Request.URL.Path, "/api/")
+		isV1 := strings.HasPrefix(c.Request.URL.Path, "/api/v1/") || c.Request.URL.Path == "/api/v1"
+		isAuth := strings.HasPrefix(c.Request.URL.Path, "/api/auth/")
+
+		if isAPIPath && !isV1 && !isAuth {
 			httpx.WriteGinError(c, http.StatusNotFound, contractapi.ErrorNotFound, "unsupported API version")
 			return
 		}

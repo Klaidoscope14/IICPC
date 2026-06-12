@@ -19,7 +19,6 @@ const ALLOWED_MIME_TYPES = [
  */
 export function SubmissionForm() {
   const [formData, setFormData] = useState<SubmissionFormData>({
-    contestantId: '',
     teamName: '',
     language: 'cpp',
     dockerfile: '',
@@ -96,7 +95,6 @@ export function SubmissionForm() {
 
     try {
       const form = new FormData()
-      form.append('contestant_id', formData.contestantId)
       form.append('team_name', formData.teamName)
       form.append('language', formData.language)
       form.append('dockerfile', formData.dockerfile || '')
@@ -111,11 +109,10 @@ export function SubmissionForm() {
       setMessage({ type: 'success', text: `Submission successful! ID: ${result.id}` })
 
       // Persist identity for leaderboard highlighting.
-      localStorage.setItem('iicpc_contestant_id', formData.contestantId)
       localStorage.setItem('iicpc_team_name', formData.teamName)
 
       // Reset form.
-      setFormData({ contestantId: '', teamName: '', language: 'cpp', dockerfile: '', benchmarkPreset: 'medium_traffic' })
+      setFormData({ teamName: '', language: 'cpp', dockerfile: '', benchmarkPreset: 'medium_traffic' })
       setSelectedFile(null)
     } catch (error) {
       const errorMessage =
@@ -153,19 +150,6 @@ export function SubmissionForm() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6 relative z-10">
-          <div className="group">
-            <label className="block text-sm font-medium text-slate-300 mb-2 transition-colors group-focus-within:text-blue-400">Contestant ID</label>
-            <input
-              id="contestant-id"
-              type="text"
-              required
-              value={formData.contestantId}
-              onChange={(e) => updateField('contestantId', e.target.value)}
-              className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 transition-all duration-300 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 focus:bg-slate-900 shadow-inner"
-              placeholder="Enter your contestant ID"
-            />
-          </div>
-
           <div className="group">
             <label className="block text-sm font-medium text-slate-300 mb-2 transition-colors group-focus-within:text-blue-400">Team Name</label>
             <input

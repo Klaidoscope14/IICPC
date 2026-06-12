@@ -66,6 +66,16 @@ func main() {
 		log.Fatalf("Failed to create websocket-service proxy: %v", err)
 	}
 
+	adminProxy, err := proxy.NewReverseProxy(cfg.AdminServiceURL, proxy.WithServiceName("admin-service"))
+	if err != nil {
+		log.Fatalf("Failed to create admin-service proxy: %v", err)
+	}
+
+	authProxy, err := proxy.NewReverseProxy(cfg.AuthServiceURL, proxy.WithServiceName("auth-service"))
+	if err != nil {
+		log.Fatalf("Failed to create auth-service proxy: %v", err)
+	}
+
 	// Set up router with middleware.
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -83,7 +93,7 @@ func main() {
 	// Rate limiting.
 	rateLimiter := ratelimit.NewRateLimiter(cfg.RateLimitPerMinute)
 	router.Use(rateLimiter.Middleware())
-	router.Use(gatewaymiddleware.OptionalBearerAuth(cfg.AuthToken))
+	router.Use(gatewaymiddleware.JWTAuthMiddleware(cfg.JWTSecret))
 	router.Use(gatewaymiddleware.RequestValidator(cfg.MaxBodyBytes))
 
 	// Route: Submission service endpoints.
@@ -137,7 +147,14 @@ func main() {
 
 		// Bot fleet routes.
 		v1.Any("/fleet/*path", botFleetProxy.Handler())
+		
+		// Admin routes.
+		v1.Any("/admin/*path", adminProxy.Handler())
 	}
+
+	// Auth routes (since nextjs calls /api/auth/register directly, we'll map /api/auth to authProxy).
+	// But it could be `/api/v1/auth`, wait, the code is `fetch('/api/auth/register')`.
+	router.Any("/api/auth/*path", authProxy.Handler())
 
 	// WebSocket passthrough.
 	router.Any("/ws/*path", wsProxy.Handler())
@@ -148,6 +165,8 @@ func main() {
 		"benchmark-orchestrator": cfg.OrchestratorURL,
 		"bot-fleet":              cfg.BotFleetURL,
 		"websocket-service":      cfg.WebSocketServiceURL,
+		"admin-service":          cfg.AdminServiceURL,
+		"auth-service":           cfg.AuthServiceURL,
 	}, time.Second)
 
 	// Health check.

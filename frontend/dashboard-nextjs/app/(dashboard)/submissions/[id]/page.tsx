@@ -1,4 +1,4 @@
-import { LogsViewer } from '../../components/LogsViewer'
+import { LogsViewer } from '../../../components/LogsViewer'
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 

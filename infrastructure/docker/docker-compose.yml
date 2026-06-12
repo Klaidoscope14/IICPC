@@ -112,6 +112,7 @@ services:
       dockerfile: services/submission-service-go/Dockerfile
     image: iicpc/submission-service:local
     container_name: iicpc-submission-service
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,6 +150,7 @@ services:
       dockerfile: services/validation-service-go/Dockerfile
     image: iicpc/validation-service:local
     container_name: iicpc-validation-service
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,6 +183,7 @@ services:
     image: iicpc/benchmark-orchestrator:local
     container_name: iicpc-benchmark-orchestrator
     user: "0:0"
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
@@ -226,6 +229,7 @@ services:
       dockerfile: services/auth-service-go/Dockerfile
     image: iicpc/auth-service:local
     container_name: iicpc-auth-service
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
@@ -249,6 +253,7 @@ services:
       dockerfile: services/api-gateway-go/Dockerfile
     image: iicpc/api-gateway:local
     container_name: iicpc-api-gateway
+    restart: on-failure
     depends_on:
       submission-service:
         condition: service_healthy
@@ -261,6 +266,7 @@ services:
     environment:
       SERVER_PORT: "8082"
       AUTH_SERVICE_URL: http://auth-service:8088
+      ADMIN_SERVICE_URL: http://admin-service:8089
       SUBMISSION_SERVICE_URL: http://submission-service:8080
       VALIDATION_SERVICE_URL: http://validation-service:8084
       ORCHESTRATOR_URL: http://benchmark-orchestrator:8081
@@ -279,12 +285,37 @@ services:
       retries: 20
       start_period: 10s
 
+  admin-service:
+    build:
+      context: ../..
+      dockerfile: services/admin-service-go/Dockerfile
+    image: iicpc/admin-service:local
+    container_name: iicpc-admin-service
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8089"
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-iicpc}?sslmode=disable
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-key-change-in-prod}
+    ports:
+      - "${ADMIN_SERVICE_PORT:-8089}:8089"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8089/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
   bot-fleet:
     build:
       context: ../..
       dockerfile: services/bot-fleet-go/Dockerfile
     image: iicpc/bot-fleet:local
     container_name: iicpc-bot-fleet
+    restart: on-failure
     depends_on:
       redpanda:
         condition: service_healthy
@@ -314,6 +345,7 @@ services:
       dockerfile: services/websocket-service-go/Dockerfile
     image: iicpc/websocket-service:local
     container_name: iicpc-websocket-service
+    restart: on-failure
     depends_on:
       redpanda:
         condition: service_healthy
@@ -335,6 +367,7 @@ services:
       dockerfile: services/correctness-engine-go/Dockerfile
     image: iicpc/correctness-engine:local
     container_name: iicpc-correctness-engine
+    restart: on-failure
     depends_on:
       redpanda:
         condition: service_healthy
@@ -363,6 +396,7 @@ services:
         NEXT_PUBLIC_WS_URL: ws://localhost:${API_GATEWAY_PORT:-8082}
     image: iicpc/dashboard:local
     container_name: iicpc-dashboard
+    restart: on-failure
     depends_on:
       api-gateway:
         condition: service_healthy

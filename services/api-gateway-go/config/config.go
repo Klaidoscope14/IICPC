@@ -13,9 +13,12 @@ type Config struct {
 	OrchestratorURL      string
 	BotFleetURL          string
 	WebSocketServiceURL  string
+	AdminServiceURL      string
+	AuthServiceURL       string
 	RateLimitPerMinute   int
 	MaxBodyBytes         int64
 	AuthToken            string
+	JWTSecret            string
 }
 
 // Load reads gateway configuration from environment variables.
@@ -27,9 +30,12 @@ func Load() *Config {
 		OrchestratorURL:      getEnv("ORCHESTRATOR_URL", "http://localhost:8081"),
 		BotFleetURL:          getEnv("BOT_FLEET_URL", "http://localhost:8085"),
 		WebSocketServiceURL:  getEnv("WEBSOCKET_SERVICE_URL", "http://localhost:8086"),
+		AdminServiceURL:      getEnv("ADMIN_SERVICE_URL", "http://localhost:8089"),
+		AuthServiceURL:       getEnv("AUTH_SERVICE_URL", "http://localhost:8088"),
 		RateLimitPerMinute:   getEnvAsInt("RATE_LIMIT_PER_MINUTE", 600),
 		MaxBodyBytes:         int64(getEnvAsInt("MAX_BODY_SIZE_MB", 64)) * 1024 * 1024,
 		AuthToken:            getEnv("API_AUTH_TOKEN", ""),
+		JWTSecret:            getEnv("JWT_SECRET", "super-secret-key-change-in-prod"),
 	}
 }
 

@@ -12,6 +12,8 @@ COPY services/validation-service-go/go.mod services/validation-service-go/go.sum
 COPY services/correctness-engine-go/go.mod ./services/correctness-engine-go/
 COPY services/websocket-service-go/go.mod ./services/websocket-service-go/
 RUN apk add --no-cache git
+COPY services/admin-service-go/go.mod ./services/admin-service-go/
+COPY services/auth-service-go/go.mod ./services/auth-service-go/
 RUN go work sync
 
 WORKDIR /src
