@@ -2,7 +2,9 @@ go 1.26.3
 
 use (
 	./pkg
+	./services/admin-service-go
 	./services/api-gateway-go
+	./services/auth-service-go
 	./services/benchmark-orchestrator-go
 	./services/bot-fleet-go
 	./services/correctness-engine-go

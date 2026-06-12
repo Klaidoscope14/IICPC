@@ -1,4 +1,4 @@
-import { BenchmarkMonitor } from '../components/BenchmarkMonitor'
+import { BenchmarkMonitor } from '../../components/BenchmarkMonitor'
 
 export const metadata = {
   title: 'Live Monitor | IICPC',

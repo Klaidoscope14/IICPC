@@ -51,7 +51,6 @@ export interface BenchmarkResult {
 
 // SubmissionFormData holds the form state for the submission form.
 export interface SubmissionFormData {
-  contestantId: string
   teamName: string
   language: string
   dockerfile: string

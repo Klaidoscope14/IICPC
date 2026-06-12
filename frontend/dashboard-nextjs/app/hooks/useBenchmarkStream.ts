@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 import { apiClient } from '../lib/api'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082'
 
 function toWebSocketBaseUrl(httpBaseUrl: string): string {
   try {

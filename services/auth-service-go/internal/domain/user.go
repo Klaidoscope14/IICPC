@@ -1,7 +1,10 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type User struct {
@@ -14,11 +17,12 @@ type User struct {
 }
 
 type Team struct {
-	ContestantID string    `json:"contestant_id" db:"contestant_id"`
-	TeamName     string    `json:"team_name" db:"team_name"`
-	UserIDs      []string  `json:"user_ids" db:"user_ids"`
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	ContestantID string          `json:"contestant_id" db:"contestant_id"`
+	TeamName     string          `json:"team_name" db:"team_name"`
+	UserIDs      pq.StringArray  `json:"user_ids" db:"user_ids"`
+	Metadata     json.RawMessage `json:"metadata" db:"metadata"`
+	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at" db:"updated_at"`
 }
 
 type AuthToken struct {

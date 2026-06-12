@@ -1,4 +1,4 @@
-import { SubmissionsList } from '../components/SubmissionsList'
+import { SubmissionsList } from '../../components/SubmissionsList'
 
 export const metadata = {
   title: 'My Submissions | IICPC',

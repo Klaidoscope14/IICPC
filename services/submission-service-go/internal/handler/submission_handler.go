@@ -90,13 +90,13 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 		defer c.Request.MultipartForm.RemoveAll()
 	}
 
-	contestantID := c.PostForm("contestant_id")
+	contestantID := c.GetHeader("X-Contestant-ID")
 	teamName := c.PostForm("team_name")
 	language := c.PostForm("language")
 	dockerfile := c.PostForm("dockerfile")
 
 	if contestantID == "" || teamName == "" || language == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "contestant_id, team_name, and language are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contestant_id (header), team_name, and language are required"})
 		return
 	}
 
@@ -219,6 +219,10 @@ func (h *SubmissionHandler) ListSubmissions(c *gin.Context) {
 	defer cancel()
 
 	contestantID := c.Query("contestant_id")
+	if contestantID == "" {
+		// Fallback to header for normal user requests
+		contestantID = c.GetHeader("X-Contestant-ID")
+	}
 	status := c.Query("status")
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
