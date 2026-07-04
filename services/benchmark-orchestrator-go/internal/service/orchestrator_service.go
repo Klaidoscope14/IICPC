@@ -28,6 +28,7 @@ type OrchestratorService interface {
 	ProcessCorrectnessEvaluated(ctx context.Context, evt events.CorrectnessEvaluatedEvent) error
 	ProcessTelemetrySnapshot(ctx context.Context, evt events.TelemetrySnapshotEvent) error
 	GetLeaderboard(ctx context.Context, limit int) ([]*domain.LeaderboardEntry, error)
+	ListBenchmarksBySubmission(ctx context.Context, submissionID string) ([]*domain.Benchmark, error)
 }
 
 // StorageClient defines how the orchestrator accesses archived submissions.
@@ -739,6 +740,10 @@ func (s *orchestratorService) GetLeaderboard(ctx context.Context, limit int) ([]
 		limit = 50
 	}
 	return s.repo.GetLeaderboard(ctx, limit)
+}
+
+func (s *orchestratorService) ListBenchmarksBySubmission(ctx context.Context, submissionID string) ([]*domain.Benchmark, error) {
+	return s.repo.ListBenchmarksBySubmission(ctx, submissionID)
 }
 
 func (s *orchestratorService) ensureDeploymentReady(ctx context.Context, submissionID, deploymentID string) error {

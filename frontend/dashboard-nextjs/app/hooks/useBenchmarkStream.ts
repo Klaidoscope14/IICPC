@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-import { apiClient } from '../lib/api'
+import { apiClient, getCookie } from '../lib/api'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082'
 
@@ -82,14 +82,18 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
     setMetrics(null)
     setMetricsHistory([])
 
+    let targetBenchmarkId = benchmarkId
+
     try {
       // Fetch initial benchmark state to populate config, status, etc.
+      // The API now accepts submission_id and resolves it, so initialData.id is the true benchmark ID
       const initialData = await apiClient<BenchmarkMetrics>(`/api/v1/benchmarks/${benchmarkId}`)
+      targetBenchmarkId = initialData.id || benchmarkId
       setMetrics(initialData)
       setMetricsHistory([initialData])
     } catch (err) {
       console.warn('Failed to fetch initial benchmark state:', err)
-      setError('No valid submission found with this ID.')
+      setError('No valid benchmark found with this ID.')
       shouldConnect.current = false
       return
     }
@@ -99,7 +103,8 @@ export function useBenchmarkStream(benchmarkId: string | null): UseBenchmarkStre
       wsRef.current = null
     }
 
-    const url = `${WS_BASE_URL}/ws/benchmarks/${benchmarkId}/stream`
+    const token = getCookie('token')
+    const url = `${WS_BASE_URL}/ws/benchmarks/${targetBenchmarkId}/stream${token ? `?access_token=${token}` : ''}`
 
     try {
       const ws = new WebSocket(url)

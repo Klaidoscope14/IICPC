@@ -150,8 +150,14 @@ func (h *OrchestratorHandler) GetBenchmarkStatus(c *gin.Context) {
 
 	benchmark, err := h.service.GetBenchmarkStatus(c.Request.Context(), benchmarkID)
 	if err != nil {
-		h.handleError(c, err)
-		return
+		// Fallback: Try looking it up as a submission_id instead
+		benchmarks, listErr := h.service.ListBenchmarksBySubmission(c.Request.Context(), benchmarkID)
+		if listErr == nil && len(benchmarks) > 0 {
+			benchmark = benchmarks[0]
+		} else {
+			h.handleError(c, err)
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, benchmark)
