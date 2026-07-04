@@ -64,6 +64,7 @@ type BenchmarkConfig struct {
 	DurationSeconds int32    `json:"duration_seconds"`
 	OrdersPerSecond int32    `json:"orders_per_second"`
 	Protocols       []string `json:"protocols"`
+	Preset          string   `json:"preset,omitempty"`
 }
 
 // --- Submission logs ---

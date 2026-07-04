@@ -35,49 +35,57 @@ func RunWorker(ctx context.Context, cfg WorkerConfig, results chan<- Result, log
 	ticker := time.NewTicker(cfg.InterRequestDelay)
 	defer ticker.Stop()
 
+	// Helper to send a single order
+	sendOrder := func() {
+		order := generator.RandomOrder(cfg.OrderProfile)
+
+		logger.Debug("request sent",
+			slog.String("benchmark_id", cfg.BenchmarkID),
+			slog.Int("worker_id", cfg.WorkerID),
+			slog.String("order_type", string(order.Type)),
+			slog.String("symbol", string(order.Symbol)),
+		)
+
+		res := client.Send(ctx, order)
+
+		switch {
+		case res.TimedOut:
+			logger.Debug("request timeout",
+				slog.String("benchmark_id", cfg.BenchmarkID),
+				slog.Int("worker_id", cfg.WorkerID),
+				slog.String("request_id", res.RequestID),
+			)
+		case res.Err != nil:
+			logger.Debug("request failure",
+				slog.String("benchmark_id", cfg.BenchmarkID),
+				slog.Int("worker_id", cfg.WorkerID),
+				slog.String("error", res.Err.Error()),
+			)
+		default:
+			logger.Debug("response received",
+				slog.String("benchmark_id", cfg.BenchmarkID),
+				slog.Int("worker_id", cfg.WorkerID),
+				slog.Int("status", res.StatusCode),
+				slog.Float64("latency_ms", res.LatencyMs),
+			)
+		}
+
+		select {
+		case results <- res:
+		default:
+			// Drop result if channel is full rather than blocking.
+		}
+	}
+
+	// Send first order immediately
+	sendOrder()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			order := generator.RandomOrder(cfg.OrderProfile)
-
-			logger.Debug("request sent",
-				slog.String("benchmark_id", cfg.BenchmarkID),
-				slog.Int("worker_id", cfg.WorkerID),
-				slog.String("order_type", string(order.Type)),
-				slog.String("symbol", string(order.Symbol)),
-			)
-
-			res := client.Send(ctx, order)
-
-			switch {
-			case res.TimedOut:
-				logger.Debug("request timeout",
-					slog.String("benchmark_id", cfg.BenchmarkID),
-					slog.Int("worker_id", cfg.WorkerID),
-					slog.String("request_id", res.RequestID),
-				)
-			case res.Err != nil:
-				logger.Debug("request failure",
-					slog.String("benchmark_id", cfg.BenchmarkID),
-					slog.Int("worker_id", cfg.WorkerID),
-					slog.String("error", res.Err.Error()),
-				)
-			default:
-				logger.Debug("response received",
-					slog.String("benchmark_id", cfg.BenchmarkID),
-					slog.Int("worker_id", cfg.WorkerID),
-					slog.Int("status", res.StatusCode),
-					slog.Float64("latency_ms", res.LatencyMs),
-				)
-			}
-
-			select {
-			case results <- res:
-			default:
-				// Drop result if channel is full rather than blocking.
-			}
+			sendOrder()
 		}
 	}
 }

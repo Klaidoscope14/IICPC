@@ -97,7 +97,7 @@ func (h *ValidationHandler) TriggerValidation(c *gin.Context) {
 	// Trigger async to avoid blocking HTTP request
 	go func() {
 		// Create a detached context since the request context will cancel when handler returns
-		_ = h.valService.ValidateSubmission(context.Background(), submissionID)
+		_ = h.valService.ValidateSubmission(context.Background(), submissionID, "")
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{

@@ -111,6 +111,11 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 	// Extract Idempotency-Key header for retry support.
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 
+	benchmarkPreset := c.PostForm("benchmark_preset")
+	if benchmarkPreset == "" {
+		benchmarkPreset = "medium_traffic"
+	}
+
 	params := &domain.CreateSubmissionParams{
 		ContestantID:     contestantID,
 		TeamName:         teamName,
@@ -120,7 +125,9 @@ func (h *SubmissionHandler) UploadSubmission(c *gin.Context) {
 		OriginalFilename: fileHeader.Filename,
 		FileSize:         fileHeader.Size,
 		IdempotencyKey:   idempotencyKey,
-		Metadata:         make(map[string]string),
+		Metadata: map[string]string{
+			"benchmark_preset": benchmarkPreset,
+		},
 	}
 
 	submission, err := h.service.UploadSubmission(ctx, params)

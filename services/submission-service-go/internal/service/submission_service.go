@@ -247,6 +247,7 @@ func (s *submissionService) publishEvents(submission *domain.Submission) {
 			StoragePath:    submission.StoragePath,
 			Checksum:       submission.Checksum,
 			ContainerImage: fmt.Sprintf("iicpc/submission-%s:latest", submission.ID[:8]),
+			Preset:         submission.Metadata["benchmark_preset"],
 			CreatedAt:      submission.CreatedAt,
 		}
 		if err := s.producer.PublishSubmissionCreated(ctx, event); err != nil {

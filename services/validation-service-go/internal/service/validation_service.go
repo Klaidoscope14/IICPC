@@ -51,8 +51,8 @@ func (s *ValidationService) Contract() domain.SubmissionContract {
 }
 
 // ValidateSubmission handles the full lifecycle of validating a submission.
-func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID string) error {
-	slog.Info("Starting validation for submission", "submission_id", submissionID)
+func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID string, preset string) error {
+	slog.Info("Starting validation for submission", "submission_id", submissionID, "preset", preset)
 
 	// 1. Mark as running
 	err := s.repo.UpdateStatus(ctx, submissionID, domain.ValidationRunning)
@@ -108,6 +108,7 @@ func (s *ValidationService) ValidateSubmission(ctx context.Context, submissionID
 		Status:       string(report.Status),
 		Language:     report.Language,
 		Runtime:      report.Runtime,
+		Preset:       preset,
 		ErrorCount:   report.TotalErrors,
 		WarningCount: report.TotalWarnings,
 		Errors:       toContractFindings(valResult.Errors),

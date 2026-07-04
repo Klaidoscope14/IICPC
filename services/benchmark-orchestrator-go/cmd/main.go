@@ -110,8 +110,8 @@ func main() {
 				return nil
 			}
 
-			logger.Info("Received validation completed event, triggering build and deploy", "submission_id", event.SubmissionID)
-			_, err := orchestratorService.BuildAndDeploy(ctx, event.SubmissionID)
+			logger.Info("Received validation completed event, triggering build and deploy", "submission_id", event.SubmissionID, "preset", event.Preset)
+			_, err := orchestratorService.BuildAndDeploy(ctx, event.SubmissionID, event.Preset)
 			return err
 		})
 
@@ -130,10 +130,49 @@ func main() {
 		// Register engine ready handler
 		events.RegisterJSONHandler[events.EngineReadyEvent](consumer, events.TopicEngineReady, func(ctx context.Context, key string, event events.EngineReadyEvent) error {
 			logger.Info("Received engine ready event, starting benchmark", "deployment_id", event.DeploymentID)
+			
+			// Map presets correctly
+			botCount := int32(10)
+			ops := int32(100)
+			duration := int32(60)
+
+			switch event.Preset {
+			case "low_volatility":
+				botCount = 2
+				ops = 10
+				duration = 60
+			case "medium_traffic":
+				botCount = 10
+				ops = 50
+				duration = 60
+			case "high_frequency_burst":
+				botCount = 50
+				ops = 200
+				duration = 30
+			case "market_open_chaos":
+				botCount = 100
+				ops = 100
+				duration = 60
+			case "flash_crash":
+				botCount = 200
+				ops = 500
+				duration = 15
+			case "stress_overload":
+				botCount = 500
+				ops = 1000
+				duration = 30
+			default:
+				// Fallback
+				botCount = 10
+				ops = 100
+				duration = 60
+			}
+
 			config := domain.BenchmarkConfig{
-				BotCount:        10,
-				DurationSeconds: 60,
-				OrdersPerSecond: 100,
+				BotCount:        botCount,
+				DurationSeconds: duration,
+				OrdersPerSecond: ops,
+				Preset:          event.Preset,
 			}
 			_, err := orchestratorService.StartBenchmark(ctx, event.SubmissionID, event.DeploymentID, config)
 			return err

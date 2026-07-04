@@ -31,7 +31,7 @@ func (c *SubmissionConsumer) HandleMessage(ctx context.Context, msg []byte) erro
 	// Validate the submission. If this fails, we still return nil to the consumer
 	// because the validation service already updates the DB status to "failed" and
 	// publishes the validation.completed event. We don't want Redpanda to redeliver.
-	if err := c.valService.ValidateSubmission(ctx, event.SubmissionID); err != nil {
+	if err := c.valService.ValidateSubmission(ctx, event.SubmissionID, event.Preset); err != nil {
 		slog.Warn("Validation process encountered an error", "submission_id", event.SubmissionID, "error", err)
 	}
 

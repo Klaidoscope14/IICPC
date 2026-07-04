@@ -44,6 +44,7 @@ type SubmissionUploadedEvent struct {
 	StoragePath    string    `json:"storage_path,omitempty"`
 	Checksum       string    `json:"checksum,omitempty"`
 	ContainerImage string    `json:"container_image,omitempty"`
+	Preset         string    `json:"preset,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -57,6 +58,7 @@ type ValidationCompletedEvent struct {
 	Status       string               `json:"status"`
 	Language     string               `json:"language"`
 	Runtime      string               `json:"runtime"`
+	Preset       string               `json:"preset,omitempty"`
 	ErrorCount   int                  `json:"error_count"`
 	WarningCount int                  `json:"warning_count"`
 	Errors       []validation.Finding `json:"errors,omitempty"`
@@ -69,6 +71,7 @@ type EngineReadyEvent struct {
 	SubmissionID string    `json:"submission_id"`
 	ServiceURL   string    `json:"service_url"`
 	ContainerID  string    `json:"container_id"`
+	Preset       string    `json:"preset,omitempty"`
 	ReadyAt      time.Time `json:"ready_at"`
 }
 

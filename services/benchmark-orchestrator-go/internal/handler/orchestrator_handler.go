@@ -90,7 +90,7 @@ func (h *OrchestratorHandler) DeploySubmission(c *gin.Context) {
 		req.ExposedPorts = []string{"8080"}
 	}
 
-	deployment, err := h.service.DeploySubmission(c.Request.Context(), req.SubmissionID, req.ContainerImage, req.ExposedPorts, req.ResourceLimits)
+	deployment, err := h.service.DeploySubmission(c.Request.Context(), req.SubmissionID, req.ContainerImage, req.ExposedPorts, req.ResourceLimits, "")
 	if err != nil {
 		h.handleError(c, err)
 		return

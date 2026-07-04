@@ -19,8 +19,8 @@ import (
 
 // OrchestratorService defines the contract for deployment and benchmark operations.
 type OrchestratorService interface {
-	BuildAndDeploy(ctx context.Context, submissionID string) (*domain.Deployment, error)
-	DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) (*domain.Deployment, error)
+	BuildAndDeploy(ctx context.Context, submissionID string, preset string) (*domain.Deployment, error)
+	DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits, preset string) (*domain.Deployment, error)
 	StartBenchmark(ctx context.Context, submissionID, deploymentID string, config domain.BenchmarkConfig) (*domain.Benchmark, error)
 	GetBenchmarkStatus(ctx context.Context, benchmarkID string) (*domain.Benchmark, error)
 	StopBenchmark(ctx context.Context, benchmarkID string) error
@@ -108,7 +108,7 @@ type deploymentState struct {
 	LastUsed     time.Time
 }
 
-func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID string) (*domain.Deployment, error) {
+func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID string, preset string) (*domain.Deployment, error) {
 	if submissionID == "" {
 		return nil, fmt.Errorf("%w: submission_id is required", domain.ErrInvalidInput)
 	}
@@ -132,7 +132,7 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 		s.recordSubmissionLog(context.Background(), submissionID, "build", "warn", "Docker manager unavailable; deployment will be simulated.", map[string]string{
 			"image": imageName,
 		})
-		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
+		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits, preset)
 	}
 
 	if exists, inspectErr := s.containerMgr.ImageExists(ctx, imageName); inspectErr != nil {
@@ -150,7 +150,7 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 			"image":    imageName,
 			"checksum": checksum,
 		})
-		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
+		return s.DeploySubmission(ctx, submissionID, imageName, ports, limits, preset)
 	}
 
 	tempFile, err := os.CreateTemp("", fmt.Sprintf("deploy-%s-*.zip", shortID(submissionID)))
@@ -181,10 +181,10 @@ func (s *orchestratorService) BuildAndDeploy(ctx context.Context, submissionID s
 	}
 	s.recordBuildLog(submissionID, "info", buildResult, nil)
 
-	return s.DeploySubmission(ctx, submissionID, imageName, ports, limits)
+	return s.DeploySubmission(ctx, submissionID, imageName, ports, limits, preset)
 }
 
-func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) (*domain.Deployment, error) {
+func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID, containerImage string, ports []string, limits domain.ResourceLimits, preset string) (*domain.Deployment, error) {
 	if submissionID == "" {
 		return nil, fmt.Errorf("%w: submission_id is required", domain.ErrInvalidInput)
 	}
@@ -215,12 +215,12 @@ func (s *orchestratorService) DeploySubmission(ctx context.Context, submissionID
 	)
 
 	// Use real container manager instead of simulation.
-	go s.executeDeployment(deployment.ID, submissionID, containerImage, ports, limits)
+	go s.executeDeployment(deployment.ID, submissionID, containerImage, ports, limits, preset)
 
 	return deployment, nil
 }
 
-func (s *orchestratorService) executeDeployment(deploymentID, submissionID, containerImage string, ports []string, limits domain.ResourceLimits) {
+func (s *orchestratorService) executeDeployment(deploymentID, submissionID, containerImage string, ports []string, limits domain.ResourceLimits, preset string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.opts.DeployTimeout)
 	defer cancel()
 
@@ -232,7 +232,7 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 		s.logger.Warn("docker manager unavailable, marking deployment as simulated",
 			slog.String("deployment_id", deploymentID),
 		)
-		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID, preset)
 		return
 	}
 
@@ -278,7 +278,7 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 			continue
 		}
 
-		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID)
+		s.markDeploymentReady(ctx, deploymentID, submissionID, serviceURL, containerID, preset)
 
 		// Capture container logs asynchronously.
 		if err := s.containerMgr.CaptureLogs(context.Background(), containerID, s.logger); err != nil {
@@ -311,7 +311,7 @@ func (s *orchestratorService) executeDeployment(deploymentID, submissionID, cont
 	})
 }
 
-func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymentID, submissionID, serviceURL, containerID string) {
+func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymentID, submissionID, serviceURL, containerID string, preset string) {
 	err := s.repo.UpdateDeploymentStatus(ctx, deploymentID, domain.DeploymentStatusDeployed, serviceURL, containerID, "")
 	if err != nil {
 		s.logger.Error("failed to update deployment status",
@@ -331,6 +331,7 @@ func (s *orchestratorService) markDeploymentReady(ctx context.Context, deploymen
 			SubmissionID: submissionID,
 			ServiceURL:   serviceURL,
 			ContainerID:  containerID,
+			Preset:       preset,
 			ReadyAt:      time.Now().UTC(),
 		})
 		if err != nil {
@@ -1144,6 +1145,7 @@ func toContractBenchmarkConfig(config domain.BenchmarkConfig) contractbenchmark.
 		DurationSeconds: config.DurationSeconds,
 		OrdersPerSecond: config.OrdersPerSecond,
 		Protocols:       config.Protocols,
+		Preset:          config.Preset,
 	}
 }
 
