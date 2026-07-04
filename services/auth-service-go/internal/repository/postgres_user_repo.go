@@ -74,3 +74,22 @@ func (r *PostgresUserRepository) GetTeamByUserID(ctx context.Context, userID str
 	}
 	return &team, nil
 }
+
+func (r *PostgresUserRepository) GetTotalTeamsCount(ctx context.Context) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM teams`
+	err := r.db.GetContext(ctx, &count, query)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r *PostgresUserRepository) CreateTeam(ctx context.Context, team *domain.Team) error {
+	query := `
+		INSERT INTO teams (contestant_id, team_name, user_ids, metadata, created_at, updated_at)
+		VALUES (:contestant_id, :team_name, :user_ids, :metadata, :created_at, :updated_at)
+	`
+	_, err := r.db.NamedExecContext(ctx, query, team)
+	return err
+}

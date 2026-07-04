@@ -12,9 +12,25 @@ export function Header() {
   const router = useRouter();
   const [timeLeft, setTimeLeft] = useState<string>('00:00:00');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [teamName, setTeamName] = useState<string | null>(null);
 
   useEffect(() => {
-    setIsAuthenticated(document.cookie.split('; ').some(c => c.startsWith('token=')));
+    const hasToken = document.cookie.split('; ').some(c => c.startsWith('token='));
+    setIsAuthenticated(hasToken);
+
+    if (hasToken) {
+      const token = document.cookie.split('; ').find(c => c.startsWith('token='))?.split('=')[1];
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082'}/api/auth/profile`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.team && data.team.team_name) {
+            setTeamName(data.team.team_name);
+          }
+        })
+        .catch(console.error);
+    }
 
     fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082'}/api/v1/admin/hackathon/dates`)
       .then(res => res.json())
@@ -65,9 +81,16 @@ export function Header() {
               <span className="text-slate-500 text-xs ml-1">REMAINING</span>
             </div>
             {isAuthenticated ? (
-              <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-slate-300 hover:text-white transition">
-                <LogOut className="w-4 h-4" /> Logout
-              </button>
+              <div className="flex items-center gap-4">
+                {teamName && (
+                  <span className="text-sm font-medium text-emerald-400">
+                    Welcome, {teamName}
+                  </span>
+                )}
+                <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-slate-300 hover:text-white transition">
+                  <LogOut className="w-4 h-4" /> Logout
+                </button>
+              </div>
             ) : (
               <Link href="/auth/login" className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition">
                 <User className="w-4 h-4" /> Login

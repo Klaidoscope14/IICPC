@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Upload } from 'lucide-react'
 import { apiClient } from '../lib/api'
 import type { SubmissionFormData } from '../types'
@@ -28,6 +28,22 @@ export function SubmissionForm() {
   const [isDragging, setIsDragging] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    const token = document.cookie.split('; ').find(c => c.startsWith('token='))?.split('=')[1];
+    if (token) {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082'}/api/auth/profile`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.team && data.team.team_name) {
+            setFormData(prev => ({ ...prev, teamName: data.team.team_name }));
+          }
+        })
+        .catch(console.error);
+    }
+  }, []);
 
   const isAllowedFile = (file: File): boolean => {
     return (
@@ -156,10 +172,10 @@ export function SubmissionForm() {
               id="team-name"
               type="text"
               required
+              readOnly
               value={formData.teamName}
-              onChange={(e) => updateField('teamName', e.target.value)}
-              className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 transition-all duration-300 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 focus:bg-slate-900 shadow-inner"
-              placeholder="Enter your team name"
+              className="w-full px-4 py-3 bg-slate-900/80 border border-slate-700/50 rounded-xl text-slate-400 transition-all duration-300 shadow-inner cursor-not-allowed"
+              placeholder="Loading team name..."
             />
           </div>
 

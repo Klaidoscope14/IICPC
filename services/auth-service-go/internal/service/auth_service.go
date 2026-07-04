@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/iicpc/auth-service-go/internal/domain"
 	"github.com/iicpc/auth-service-go/internal/repository"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -42,6 +45,27 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegistrationReque
 	if err := s.repo.CreateUser(ctx, user); err != nil {
 		return nil, err
 	}
+
+	// Create Team for the user
+	count, err := s.repo.GetTotalTeamsCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	teamName := fmt.Sprintf("team_%d", count+1)
+	team := &domain.Team{
+		ContestantID: uuid.NewString(),
+		TeamName:     teamName,
+		UserIDs:      pq.StringArray{user.ID},
+		Metadata:     json.RawMessage(`{}`),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	if err := s.repo.CreateTeam(ctx, team); err != nil {
+		return nil, err
+	}
+
 	return user, nil
 }
 

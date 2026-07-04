@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { CheckCircle } from 'lucide-react';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -32,7 +33,9 @@ export default function RegisterPage() {
       }
 
       setSuccess(true);
-      window.location.href = '/auth/login';
+      setTimeout(() => {
+        window.location.href = '/auth/login';
+      }, 2000);
     } catch (err: any) {
       setError(err.message);
       setLoading(false);
@@ -61,40 +64,48 @@ export default function RegisterPage() {
             </div>
           )}
 
-          <form className="mt-8 space-y-6" onSubmit={handleRegister}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300">Email address</label>
-                <input
-                  type="email"
-                  required
-                  className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300">Password</label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <p className="mt-1 text-xs text-gray-500">Must be at least 8 characters</p>
-              </div>
+          {success ? (
+            <div className="flex flex-col items-center justify-center space-y-4 py-8">
+              <CheckCircle className="w-16 h-16 text-emerald-500 animate-bounce" />
+              <h3 className="text-xl font-medium text-emerald-400">Registration Successful!</h3>
+              <p className="text-gray-400">Redirecting you to sign in...</p>
             </div>
+          ) : (
+            <form className="mt-8 space-y-6" onSubmit={handleRegister}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300">Email address</label>
+                  <input
+                    type="email"
+                    required
+                    className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300">Password</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    className="mt-1 block w-full rounded-md bg-gray-800 border-gray-700 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Must be at least 8 characters</p>
+                </div>
+              </div>
 
-            <button
-              type="submit"
-              disabled={loading || success}
-              className="group relative flex w-full justify-center rounded-md bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 transition-colors disabled:opacity-50"
-            >
-              {success ? 'Redirecting...' : loading ? 'Creating account...' : 'Create account'}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={loading}
+                className="group relative flex w-full justify-center rounded-md bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 transition-colors disabled:opacity-50"
+              >
+                {loading ? 'Creating account...' : 'Create account'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
