@@ -79,6 +79,13 @@ Leaderboard & Analytics
 
 ---
 
+<img width="1867" height="916" alt="image" src="https://github.com/user-attachments/assets/5c89a1c6-4ce4-4345-8e9b-4c1899fb6b54" />
+
+<img width="1863" height="906" alt="image" src="https://github.com/user-attachments/assets/ea159f69-737e-4321-9573-f94a8a2820ba" />
+
+<img width="1793" height="887" alt="image" src="https://github.com/user-attachments/assets/fcf6f669-94ed-4146-a170-559c173e061d" />
+
+---
 # Major Components
 
 ## 1. Submission & Sandboxing Engine
